@@ -58,65 +58,70 @@ async function generateCampaign() {
 
 // 2. Sales Pitch Generator
 async function generatePitch() {
-    const btn = document.querySelector('#sales button');
-    btn.innerText = "Crafting...";
+    console.log("FUNCTION TRIGGERED: generatePitch");
+    const product = document.getElementById("pitchProduct").value;
+    const target = document.getElementById("pitchTarget").value;
+    console.log("PAYLOAD:", { product, target });
 
     try {
-        const payload = {
-            product: document.getElementById('sP_product').value || "Our Platform",
-            client_type: document.getElementById('sP_client').value || "the prospect"
-        };
-
-        const res = await fetch(`${API_BASE}/pitch`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+        const res = await fetch("http://127.0.0.1:8000/pitch", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ product, target })
         });
 
+        if (!res.ok) throw new Error("Backend failed: " + res.status);
+
         const data = await res.json();
-        const { problem, value_prop, objection, closing, ai_insight } = data;
+        console.log("RESPONSE:", data);
 
-        const content = `
-            <strong>⚠️ Problem:</strong> ${problem}<br>
-            <strong>💎 Value Prop:</strong> ${value_prop}<br>
-            <strong>🛡 Objection:</strong> ${objection}<br>
-            <strong>🤝 Closing:</strong> ${closing}
-        `;
-
-        showOutput('sP_output', content, ai_insight);
-    } catch (e) { console.error(e); } finally { btn.innerText = "Craft Pitch"; }
+        document.getElementById("pitchOutput").style.display = 'block';
+        document.getElementById("pitchOutput").innerHTML = `
+        <b>Problem:</b> ${data.problem}<br>
+        <b>Value:</b> ${data.value_prop}<br>
+        <b>Objection:</b> ${data.objection}<br>
+        <b>Closing:</b> ${data.closing}<br>
+        <b>AI Insight:</b> ${data.ai_insight}
+      `;
+    } catch (e) {
+        console.error(e);
+        document.getElementById("pitchOutput").style.display = 'block';
+        document.getElementById("pitchOutput").innerHTML = "<b style='color:red'>Error: " + e.message + "</b>";
+    }
 }
 
-// 3. Lead Scoring
+// 3. Intelligent Lead Scoring
 async function scoreLead() {
-    const btn = document.querySelector('#analysis button') || event.target; // Fallback
-    btn.innerText = "Analyzing...";
+    console.log("FUNCTION TRIGGERED: scoreLead");
+    const company = document.getElementById("leadCompany").value;
+    const budget = Number(document.getElementById("leadBudget").value);
+    const interest = Number(document.getElementById("leadInterest").value);
+    console.log("PAYLOAD:", { company, budget, interest });
 
     try {
-        const payload = {
-            budget: parseInt(document.getElementById('lS_budget').value) || 0,
-            interest: parseInt(document.getElementById('lS_interest').value) || 0,
-            company_size: document.getElementById('lS_size').value
-        };
-
-        const res = await fetch(`${API_BASE}/leads`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
+        const res = await fetch("http://127.0.0.1:8000/leads", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ company, budget, interest })
         });
 
+        if (!res.ok) throw new Error("Backend failed: " + res.status);
+
         const data = await res.json();
-        const { score, category, recommendation, explanation } = data;
+        console.log("Lead Score:", data);
 
-        const content = `
-            <strong>📊 Score:</strong> ${score} / 100<br>
-            <strong>🏷 Category:</strong> ${category}<br>
-            <strong>🚀 Recommended Action:</strong> ${recommendation}
-        `;
-
-        // Use 'explanation' as the insight text
-        showOutput('lS_output', content, explanation);
-    } catch (e) { console.error(e); } finally { btn.innerText = "Analyze Lead"; }
+        document.getElementById("leadOutput").style.display = 'block';
+        document.getElementById("leadOutput").innerHTML = `
+        <b>Score:</b> ${data.score}/100<br>
+        <b>Category:</b> ${data.category}<br>
+        <b>Recommendation:</b> ${data.recommendation}<br>
+        <b>Explanation:</b> ${data.explanation}
+      `;
+    } catch (e) {
+        console.error(e);
+        document.getElementById("leadOutput").style.display = 'block';
+        document.getElementById("leadOutput").innerHTML = "<b style='color:red'>Error: " + e.message + "</b>";
+    }
 }
 
 // 4. Market Analysis
@@ -139,49 +144,60 @@ async function analyzeMarket() {
     } catch (e) { console.error(e); }
 }
 
-// 5. Channel Content
+// 5. Channel Content Generator
 async function generateContent() {
-    try {
-        const payload = {
-            product: document.getElementById('cc_product').value || "Produce",
-            platform: document.getElementById('cc_platform').value
-        };
-        const res = await fetch(`${API_BASE}/social`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        const { caption, hashtags, ai_insight } = data;
+    console.log("📱 generateContent() called");
 
-        const content = `
-            <strong>📝 Capacitor:</strong><br>${caption}<br><br>
-            <strong>🏷 Hashtags:</strong> ${hashtags}
-        `;
-        showOutput('cc_output', content, ai_insight);
-    } catch (e) { console.error(e); }
+    const product = document.getElementById("contentProduct").value;
+    const platform = document.getElementById("contentPlatform").value;
+
+    console.log("PAYLOAD:", { product, platform });
+
+    const res = await fetch("http://127.0.0.1:8000/social", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ product, platform })
+    });
+
+    const data = await res.json();
+    console.log("RESPONSE:", data);
+
+    const output = document.getElementById("contentOutput");
+    if (!output) {
+        alert("❌ contentOutput div missing");
+        return;
+    }
+
+    output.style.display = "block";
+    output.innerHTML = `
+    <h4>Generated Content</h4>
+    <p><b>Caption:</b><br>${data.caption}</p>
+    <p><b>Hashtags:</b> ${data.hashtags}</p>
+    <p><i>${data.ai_insight}</i></p>
+  `;
 }
 
 // 6. Outreach
-async function generateOutreach() {
-    try {
-        const payload = {
-            product: document.getElementById('ao_product').value || "solution",
-            customer_type: document.getElementById('ao_prospect').value || "Manager",
-            goal: document.getElementById('ao_type').value
-        };
-        const res = await fetch(`${API_BASE}/email`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        const { subject, body, follow_up_tip } = data;
+async function generateEmail() {
+    const recipient = document.getElementById("emailRecipient").value;
+    const context = document.getElementById("emailContext").value;
+    const product = document.getElementById("emailProduct").value;
 
-        const content = `
-            <strong>📧 Subject:</strong> ${subject}<br>
-            <strong>📄 Body:</strong><br>${body.replace(/\n/g, '<br>')}
-        `;
+    const res = await fetch("http://127.0.0.1:8000/email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recipient, context, product })
+    });
 
-        // Use follow_up_tip as insight
-        showOutput('ao_output', content, follow_up_tip);
-    } catch (e) { console.error(e); }
+    const data = await res.json();
+    console.log("Email Response:", data);
+
+    document.getElementById("emailOutput").style.display = 'block';
+    document.getElementById("emailOutput").innerHTML = `
+    <b>Subject:</b> ${data.subject}<br><br>
+    <pre>${data.body}</pre><br>
+    <i>${data.follow_up_tip}</i>
+  `;
 }
 
 // 7. Campaign Performance Prediction

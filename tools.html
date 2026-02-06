@@ -53,27 +53,32 @@
             <!-- 2. Sales Pitch Generator -->
             <div class="card" id="sales">
                 <h3>🎯 Sales Pitch Generator</h3>
-                <div class="input-group"><input id="sP_product" placeholder="Solution/Product"></div>
-                <div class="input-group"><input id="sP_client" placeholder="Client Industry/Role"></div>
+                <div class="input-group"><input id="pitchProduct" placeholder="Solution/Product"></div>
+                <div class="input-group"><input id="pitchTarget" placeholder="Target Audience (e.g. CFOs)"></div>
                 <button class="tool-btn" onclick="generatePitch()">Craft Pitch</button>
-                <div id="sP_output" class="output"></div>
+                <div id="pitchOutput" class="output"></div>
             </div>
 
-            <!-- 3. Show Lead Scoring -->
+            <!-- 3. Intelligent Lead Scoring -->
             <div class="card">
                 <h3>⚖️ Intelligent Lead Scoring</h3>
-                <div class="input-group"><input id="lS_budget" type="number" placeholder="Budget ($)"></div>
-                <div class="input-group"><input id="lS_interest" type="number" placeholder="Interest (1-10)"></div>
-                <div class="input-group">
-                    <select id="lS_size">
-                        <option value="Startup">Startup (< 50 emp)</option>
-                        <option value="Mid">Mid-Market (50-500)</option>
-                        <option value="Enterprise">Enterprise (500+)</option>
-                    </select>
-                </div>
+                <div class="input-group"><input id="leadCompany" placeholder="Company Name"></div>
+                <div class="input-group"><input id="leadBudget" type="number" placeholder="Budget ($)"></div>
+                <div class="input-group"><input id="leadInterest" type="number" placeholder="Interest (1-10)"></div>
                 <button class="tool-btn" onclick="scoreLead()">Analyze Lead</button>
-                <div id="lS_output" class="output"></div>
+                <div id="leadOutput" class="output"></div>
             </div>
+
+            <!-- 4. Market Analysis (Preserving existing working one, or updating if needed? Prompt didn't specify new JS for this, only the 4 broken ones. But 'Market Analysis' was not listed as broken in 'CURRENT STATUS' of previous prompt, but listed as broken in 'PROBLEMS TO FIX' earlier? Actually the prompt says 'Campaign Generator works -> others do not'. Market Analysis is 'others'? 
+            Wait, the prompt only gave JS for: Pitch, Lead Scoring, Channel Content, AI Outreach. 
+            It did NOT give JS for Market Analysis. 
+            I should probably leave Market Analysis alone or check if it needs fixes. 
+            The 'CURRENT STATUS' says: Campaign Generator -> WORKING. 
+            Pitch, Leads, Social, Outreach -> NOT WORKING.
+            Market Analysis is not mentioned as broken or working explicitly in the list of 5 items. 
+            However, previous turns established /market endpoint works. 
+            I will focus strictly on the 4 provided in the prompt "2 REPLCE ALL API CALLS WITH THESE EXACT ONES". 
+            I'll touch the IDs for the 4 tools. -->
 
             <!-- 4. Market Analysis -->
             <div class="card" id="analysis">
@@ -86,32 +91,29 @@
             <!-- 5. Channel Content -->
             <div class="card">
                 <h3>📱 Channel Content Gen</h3>
-                <div class="input-group"><input id="cc_product" placeholder="Product/Feature"></div>
                 <div class="input-group">
-                    <select id="cc_platform">
-                        <option value="LinkedIn">LinkedIn Post</option>
-                        <option value="Twitter">X / Twitter Thread</option>
-                        <option value="Instagram">Instagram Caption</option>
+                    <input id="contentProduct" placeholder="Product / Feature">
+                </div>
+                <div class="input-group">
+                    <select id="contentPlatform">
+                        <option>LinkedIn</option>
+                        <option>X / Twitter</option>
+                        <option>Instagram</option>
                     </select>
                 </div>
                 <button class="tool-btn" onclick="generateContent()">Create Content</button>
-                <div id="cc_output" class="output"></div>
+                <div id="contentOutput" class="output"></div>
             </div>
 
             <!-- 6. AI Outreach -->
             <div class="card">
                 <h3>📧 AI Outreach Generator</h3>
-                <div class="input-group"><input id="ao_product" placeholder="Offering"></div>
-                <div class="input-group"><input id="ao_prospect" placeholder="Prospect Role"></div>
-                <div class="input-group">
-                    <select id="ao_type">
-                        <option value="Cold">Cold Outreach</option>
-                        <option value="FollowUp">Follow Up</option>
-                        <option value="Closing">Closing Push</option>
-                    </select>
-                </div>
-                <button class="tool-btn" onclick="generateOutreach()">Draft Message</button>
-                <div id="ao_output" class="output"></div>
+                <div class="input-group"><input id="emailRecipient" placeholder="Recipient Name"></div>
+                <div class="input-group"><input id="emailProduct" placeholder="Product/Solution"></div>
+                <div class="input-group"><textarea id="emailContext"
+                        placeholder="Context (e.g. they posted about hiring)" rows="2"></textarea></div>
+                <button class="tool-btn" onclick="generateEmail()">Draft Message</button>
+                <div id="emailOutput" class="output"></div>
             </div>
 
         </div>
