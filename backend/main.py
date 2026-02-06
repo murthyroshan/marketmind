@@ -87,8 +87,6 @@ def init_db():
 
     conn.commit()
     conn.close()
-    conn.commit()
-    conn.close()
     print("[INFO] Database initialized (tables created if missing)")
 
 # Initialize DB on startup
@@ -116,6 +114,10 @@ class EmailRequest(BaseModel):
     recipient: str
     context: str
     product: str
+
+class ContentRequest(BaseModel):
+    product: str
+    platform: str
 
 class WhatsAppRequest(BaseModel):
     recipient: str
@@ -146,93 +148,120 @@ def generate_campaign(req: CampaignRequest):
     conn.close()
 
     return {
-        "objective": f"Dominate {req.platform} with {req.product}",
-        "theme": "Efficiency & Growth",
-        "cta": "Book a Demo Today",
-        "outcome": "30% increase in qualified leads",
-        "ai_insight": f"{req.platform} is the optimal channel for {req.goal}."
+        "objective": f"Launch a high-impact {req.platform} campaign to drive {req.goal} for {req.product}.",
+        "theme": "Authority & Trust Building",
+        "cta": "Schedule Your Free Strategic Consultation",
+        "outcome": "20-30% increase in qualified inbound leads within Q1.",
+        "ai_insight": f"Data indicates {req.platform} algorithms are currently prioritizing educational content for {req.goal} campaigns."
     }
 
 # 2. Sales Pitch Generator
 @app.post("/pitch")
 def generate_pitch(req: PitchRequest):
     return {
-        "problem": f"{req.target} struggles with efficiency.",
-        "value_prop": f"{req.product} boosts productivity by 40%.",
-        "objection": "ROI proven in 30 days.",
-        "closing": "Can we schedule a 15-min demo?",
-        "ai_insight": f"Focus on {req.target}'s pain points."
+        "problem": f"{req.target} often face fragmented processes that kill team productivity and slow down revenue cycles.",
+        "value_prop": f"{req.product} unifies your workflow, automating manual tasks to recover 15+ hours per week per rep.",
+        "objection": "Implementation takes less than 24 hours with zero downtime, unlike legacy competitors.",
+        "closing": "If we could show you a 3x ROI in the first month, would you be open to a 15-minute walkthrough?",
+        "ai_insight": f"Emphasize speed to value—{req.target} care most about immediate efficiency gains right now."
     }
 
 # 3. Lead Scoring
 @app.post("/leads")
 def score_lead(req: ScoreRequest):
-    budget_score = min(40, (req.budget / 1000) * 0.4)
-    interest_score = req.interest * 6
-    base_score = 10
+    # Deterministic Scoring Logic
+    score = 20 # Base Score
     
-    total_score = int(budget_score + interest_score + base_score)
-    total_score = min(100, max(0, total_score))
+    # Budget Scoring (Max 40)
+    if req.budget >= 50000: score += 40
+    elif req.budget >= 10000: score += 30
+    elif req.budget >= 5000: score += 15
+    else: score += 5
     
-    if total_score >= 70:
+    # Interest Scoring (Max 40)
+    if req.interest >= 9: score += 40
+    elif req.interest >= 7: score += 30
+    elif req.interest >= 5: score += 15
+    else: score += 5
+    
+    score = min(100, score)
+    
+    # Category Deterministic Logic
+    if score >= 80:
         category = "Hot"
-        recommendation = "Call within 24 hours"
-    elif total_score >= 50:
+        recommendation = "Schedule a discovery call within 3 days" # Strict prompt output
+    elif score >= 55: # Strict threshold 55-79
         category = "Warm"
-        recommendation = "Send personalized email within 3 days"
+        recommendation = "Send a personalized nurture email with a relevant case study"
     else:
         category = "Cold"
-        recommendation = "Nurture with educational content"
-    
+        recommendation = "Add to monthly newsletter for long-term brand awareness"
+        
+    explanation = f"Moderate interest ({req.interest}/10) combined with budget of ${req.budget} results in a {category} score."
+    if category == "Hot":
+        explanation = f"High interest ({req.interest}/10) and strong budget indicates immediate readiness."
+    elif category == "Cold":
+        explanation = f"Low interest ({req.interest}/10) suggests long-term nurturing is required."
+
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
         "INSERT INTO leads (company, budget, interest, score, category, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (req.company, req.budget, req.interest, total_score, category, datetime.now().isoformat())
+        (req.company, req.budget, req.interest, score, category, datetime.now().isoformat())
     )
     conn.commit()
     conn.close()
     
     return {
-        "score": total_score,
+        "score": score,
         "category": category,
         "recommendation": recommendation,
-        "explanation": "High budget indicates strong intent."
+        "explanation": explanation
     }
 
 # 4. Market Analysis
 @app.post("/market")
 def market_analysis_tool(req: AnalysisRequest):
     return {
-        "trend": "Upward Growth",
-        "demand": "High (85/100)",
-        "competition": "Moderate",
-        "opportunity": "Niche Expansion",
-        "ai_insight": f"{req.industry} is ripe for disruption."
+        "trend": "Rapid Upward Growth",
+        "demand": "High Demand (85/100)",
+        "competition": "Moderate Saturation",
+        "opportunity": "Expansion into Enterprise Niche",
+        "ai_insight": f"{req.industry} markets are currently rewarding vertical integration and specialized service providers."
     }
 
 # 5. Channel Content Generator
 @app.post("/social")
 def generate_social(req: ContentRequest):
     return {
-        "caption": f"Excited to announce {req.product}! 🚀 #Innovation #{req.platform}",
-        "hashtags": f"#{req.product} #{req.platform} #Growth",
-        "ai_insight": f"{req.platform} algorithms favor short video content right now."
+        "caption": f"Struggling to scale your operations? 🚀\n\n{req.product} empowers teams to break through bottlenecks and achieve predictable growth. Stop guessing and start scaling today.\n\n👇 Drop a comment for a free playbook.",
+        "hashtags": f"#{req.product.replace(' ', '')} #{req.platform} #GrowthHacking #SaaS #Productivity",
+        "ai_insight": f"Posts with questions in the first line see 2x higher engagement on {req.platform}."
     }
 
 # 6. Personalized Email
 @app.post("/email")
 def generate_email(req: EmailRequest):
-    email_body = f"""Hi {req.recipient},
+    recipient = req.recipient.strip()
+    context = req.context.strip()
+    product = req.product.strip()
 
-I saw your work on {req.context}. Our {req.product} can help you achieve more.
+    body = f"""Hi {recipient},
 
-Let's chat?
+I noticed that teams dealing with {context} often struggle with manual follow-ups and low-quality engagement.
+
+{product} helps automate outreach, prioritize high-intent leads, and improve response rates—without increasing workload.
+
+Would you be open to a quick 10-minute conversation this week to see if this could help your team?
+
+Best regards,
+SalesSpark AI Team
 """
+
     return {
-        "subject": f"Idea for {req.recipient}",
-        "body": email_body,
-        "follow_up_tip": "Short emails have 40% higher reply rates."
+        "subject": f"Quick idea to improve your {context}",
+        "body": body,
+        "follow_up_tip": "If there’s no reply, send a short follow-up after 3 days referencing this email."
     }
 
 # ... (Existing Request Models)
