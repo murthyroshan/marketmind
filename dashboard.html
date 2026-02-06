@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard | SalesSpark AI</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        .stat-card {
+            text-align: center;
+            padding: 40px 20px;
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <h1>SalesSpark AI</h1>
+        <nav>
+            <a href="index.html">Home</a>
+            <a href="tools.html">AI Tools</a>
+            <a href="dashboard.html" class="active">Dashboard</a>
+        </nav>
+    </header>
+
+    <section>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+            <h2 class="section-title" style="margin-bottom: 0;">Business Intelligence Dashboard</h2>
+            <div id="data-source-badge"></div>
+        </div>
+
+        <!-- KPI Grid -->
+        <div class="grid">
+            <div class="card stat-card">
+                <div class="stat-label">Total Campaigns Generated</div>
+                <div class="stat-value" id="dash-campaigns">0</div>
+                <div class="trend-indicator" id="trend-campaigns">Stats Pending...</div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-label">Leads Scored</div>
+                <div class="stat-value" id="dash-leads">0</div>
+                <div class="trend-indicator" id="trend-leads">Stats Pending...</div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-label">Hot Leads Identified</div>
+                <div class="stat-value" id="dash-hot">0</div>
+                <div class="trend-indicator" id="trend-hot">Waiting for data...</div>
+            </div>
+            <div class="card stat-card">
+                <div class="stat-label">Avg Lead Quality</div>
+                <div class="stat-value" id="dash-quality">0%</div>
+                <div class="trend-indicator" id="trend-quality">Analysis Ready</div>
+            </div>
+        </div>
+
+        <!-- Charts / Advanced Metrics -->
+        <div style="margin-top: 40px;">
+            <div class="card">
+                <h3>📈 Performance Analytics</h3>
+                <p style="color:var(--text-muted); margin-bottom:20px;">Real-time visualization of your AI scoring
+                    performance.</p>
+                <div id="simple-chart"></div>
+            </div>
+        </div>
+
+        <!-- PHASE 2: AI Recommendations -->
+        <div style="margin-top: 40px;">
+            <div class="card"
+                style="background: linear-gradient(135deg, rgba(139,92,246,0.1), rgba(167,139,250,0.05));">
+                <h3>🤖 AI Recommendations</h3>
+                <div id="rec_action" style="font-size: 18px; font-weight: 600; margin: 15px 0; color: var(--primary);">
+                </div>
+                <div id="rec_tip" style="color: var(--text-muted); line-height: 1.6;"></div>
+                <div id="rec_platform" style="margin-top: 10px; font-size: 14px;"></div>
+            </div>
+        </div>
+
+        <!-- PHASE 2: Lead Segmentation -->
+        <div style="margin-top: 40px;">
+            <h3 style="margin-bottom: 20px;">📊 Lead Segmentation</h3>
+            <div class="grid" style="grid-template-columns: repeat(4, 1fr);">
+                <div class="card stat-card">
+                    <div class="stat-label">💎 High-Value</div>
+                    <div class="stat-value" id="seg_high">0</div>
+                    <div style="font-size: 12px; color: var(--text-muted);">Score ≥ 80</div>
+                </div>
+                <div class="card stat-card">
+                    <div class="stat-label">🔥 High-Intent</div>
+                    <div class="stat-value" id="seg_intent">0</div>
+                    <div style="font-size: 12px; color: var(--text-muted);">Interest ≥ 8</div>
+                </div>
+                <div class="card stat-card">
+                    <div class="stat-label">💰 Price-Sensitive</div>
+                    <div class="stat-value" id="seg_price">0</div>
+                    <div style="font-size: 12px; color: var(--text-muted);">Budget < $20k</div>
+                    </div>
+                    <div class="card stat-card">
+                        <div class="stat-label">❄️ Low-Intent</div>
+                        <div class="stat-value" id="seg_low">0</div>
+                        <div style="font-size: 12px; color: var(--text-muted);">Score < 40</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PHASE 2: Weekly AI Report -->
+                <div style="margin-top: 40px;">
+                    <div class="card">
+                        <h3>📋 Weekly AI Insight Report</h3>
+                        <p id="report_summary"
+                            style="line-height: 1.8; color: var(--text); margin-top: 15px; font-size: 16px;"></p>
+                        <div id="report_meta" style="margin-top: 15px; color: var(--text-muted); font-size: 14px;">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- PHASE 3: Next Best Actions -->
+        <div style="margin-top: 40px;">
+            <h3 style="margin-bottom: 20px;">📌 Next Best Actions</h3>
+            <div id="next-actions-container"></div>
+        </div>
+
+        <!-- PHASE 3: Real-Time Alerts -->
+        <div id="alerts-container" style="margin-top: 40px; display: none;"></div>
+
+        <!-- PHASE 3: Sales Momentum -->
+        <div style="margin-top: 40px;">
+            <div class="card">
+                <h3>📈 Sales Momentum Intelligence</h3>
+                <div id="trend-badge" style="font-size: 24px; font-weight: 700; margin: 15px 0;"></div>
+                <div id="trend-direction" style="margin-bottom: 15px; color: var(--text-muted);"></div>
+
+                <div id="risk-container" style="margin-top: 15px;"></div>
+                <div id="opportunity-container" style="margin-top: 15px;"></div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <p>© 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
+    </footer>
+
+    <script src="js/app.js"></script>
+    <script src="js/dashboard.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Leads - SalesSpark AI</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <nav class="navbar">
+        <a href="index.html">Home</a>
+        <a href="tools.html">Tools</a>
+        <a href="prediction.html">Prediction</a>
+        <a href="market_intelligence.html">Market Intelligence</a>
+        <a href="sales_copilot.html">Sales Copilot</a>
+        <a href="leads.html">Leads</a>
+    </nav>
+
+    <section class="hero-section"
+        style="padding: 60px 0; background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%);">
+        <div class="container">
+            <h1 style="color: white; font-size: 42px; margin-bottom: 15px;">👥 Leads Intelligence</h1>
+            <p style="color: rgba(255,255,255,0.9); font-size: 18px;">Full visibility into your pipeline data</p>
+        </div>
+    </section>
+
+    <section class="container" style="padding: 40px 20px;">
+        <div class="card">
+            <h3>🗂️ Active Leads</h3>
+            <p style="color: var(--text-muted); margin-bottom: 20px;">Below is the live data used by the Sales Copilot.
+            </p>
+
+            <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+                <thead>
+                    <tr style="border-bottom: 2px solid rgba(255,255,255,0.1); text-align: left;">
+                        <th style="padding: 12px; color: var(--text-muted);">Lead ID</th>
+                        <th style="padding: 12px; color: var(--text-muted);">Category</th>
+                        <th style="padding: 12px; color: var(--text-muted);">Score</th>
+                        <th style="padding: 12px; color: var(--text-muted);">Company</th>
+                    </tr>
+                </thead>
+                <tbody id="leads-table-body">
+                    <tr>
+                        <td colspan="4" style="padding: 20px; text-align: center; color: var(--text-muted);">Loading
+                            leads...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <footer>
+        <p>© 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
+    </footer>
+
+    <script src="js/app.js"></script>
+    <script src="js/generators.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const res = await fetch('http://127.0.0.1:8000/leads');
+                const data = await res.json();
+                const tbody = document.getElementById('leads-table-body');
+
+                if (!data.leads || data.leads.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" style="padding: 20px; text-align: center;">No leads found.</td></tr>';
+                    return;
+                }
+
+                tbody.innerHTML = data.leads.map(lead => {
+                    let color = '#94a3b8';
+                    if (lead.category === 'Hot') color = '#f87171';
+                    if (lead.category === 'Warm') color = '#f59e0b';
+
+                    return `
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+                            <td style="padding: 15px; font-weight: 700;">#${lead.id}</td>
+                            <td style="padding: 15px;"><span style="color: ${color}; font-weight: 600; background: ${color}15; padding: 4px 10px; border-radius: 4px;">${lead.category}</span></td>
+                            <td style="padding: 15px; font-weight: 700;">${lead.score}/100</td>
+                            <td style="padding: 15px; color: var(--text-muted);">${lead.company || 'N/A'}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+            } catch (e) {
+                console.error(e);
+                document.getElementById('leads-table-body').innerHTML = '<tr><td colspan="4" style="color: #f87171; padding: 20px; text-align: center;">Error loading leads.</td></tr>';
+            }
+        });
+    </script>
+</body>
+
+</html>
