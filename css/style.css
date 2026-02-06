@@ -59,6 +59,24 @@ header h1 {
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
+.page-title {
+    text-align: center;
+    font-size: 2.4rem;
+    font-weight: 700;
+    margin-top: 30px;
+    margin-bottom: 8px;
+    background: linear-gradient(90deg, #a78bfa, #8b5cf6);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.page-subtitle {
+    text-align: center;
+    font-size: 1rem;
+    color: #cbd5f5;
+    margin-bottom: 30px;
+}
+
 .navbar a {
     color: white;
     font-weight: 600;
@@ -75,12 +93,14 @@ section {
     margin: 0 auto;
 }
 
-h2.section-title {
-    font-size: 32px;
-    margin-bottom: 40px;
-    border-left: 4px solid var(--primary);
-    padding-left: 20px;
-    color: white;
+h2.section-title,
+.section-title {
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin-bottom: 10px;
+    color: #e5e7eb;
+    border-left: none;
+    padding-left: 0;
 }
 
 /* --- Components --- */
