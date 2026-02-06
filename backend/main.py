@@ -133,6 +133,9 @@ class DealAssistRequest(BaseModel):
 class FollowupRequest(BaseModel):
     lead_id: int
 
+class ChatRequest(BaseModel):
+    message: str
+
 # ==================== PHASE 1: CORE GENERATORS ====================
 
 # 1. Campaign Generator
@@ -263,6 +266,102 @@ SalesSpark AI Team
         "body": body,
         "follow_up_tip": "If there’s no reply, send a short follow-up after 3 days referencing this email."
     }
+
+# 7. AI Chatbot
+@app.post("/chat")
+def chat_assistant(req: ChatRequest):
+    msg = req.message.lower()
+    
+    conn = get_db()
+    cur = conn.cursor()
+
+    # --- INTENT 1: LEADS & SALES (CORE) ---
+    if "lead" in msg or "focus" in msg or "prioritize" in msg:
+        # "Which leads should I focus on?"
+        cur.execute("SELECT company, category, score FROM leads ORDER BY score DESC LIMIT 3")
+        leads = cur.fetchall()
+        if not leads:
+            conn.close()
+            return {"reply": "I don't see any leads yet. Use the Lead Scoring tool to generate some first."}
+        lead_list = ", ".join([f"{l[0]} ({l[1]}, {l[2]})" for l in leads])
+        reply = f"Based on urgency, prioritize: {lead_list}. These show the highest engagement right now."
+        conn.close()
+        return {"reply": reply}
+
+    elif "hot" in msg and "lead" in msg:
+        return {"reply": "A 'Hot Lead' (Score 80-100) is ready to buy. They have high budget availability and demonstrated strong interest. Call them immediately."}
+
+    elif "warm" in msg and "lead" in msg:
+        return {"reply": "A 'Warm Lead' (Score 50-79) is interested but needs nurturing. Send them a case study or a value-based email to build trust."}
+
+    elif "cold" in msg:
+        if "what" in msg or "mean" in msg:
+             return {"reply": "A 'Cold Lead' (Score <50) isn't ready yet. Don't push for a sale; instead, add them to a monthly newsletter to keep your brand top-of-mind."}
+        # "Why are most of my leads cold?" / "What to do with cold leads?"
+        cur.execute("SELECT COUNT(*) FROM leads WHERE category='Cold'")
+        cold_count = cur.fetchone()[0]
+        conn.close()
+        return {"reply": f"You currently have {cold_count} cold leads. This is normal! Focus on high-volume, low-effort automation (like email drips) to warm them up over time."}
+
+    elif "quality" in msg:
+         return {"reply": "To improve lead quality, try narrowing your campaign targeting. High-intent leads come from specific problem-solution matching, not broad blasts."}
+
+    # --- INTENT 2: CAMPAIGNS & MARKETING ---
+    elif "strategy" in msg and "campaign" in msg:
+         return {"reply": "For B2B SaaS, a 'LinkedIn Thought Leadership' strategy works best. For B2C, try 'Instagram Visual Storytelling'. Check our Campaign Generator for a full plan."}
+
+    elif "platform" in msg:
+         return {"reply": "If you're selling high-ticket items ($10k+), prioritize LinkedIn. For volume sales or e-commerce, Instagram and Twitter/X drive better cost-per-click."}
+
+    elif "conversion" in msg:
+         return {"reply": "Low conversions often mean your offer isn't matching the audience's pain point. Try A/B testing your Call to Action (CTA) or refining your value proposition."}
+
+    elif "brand" in msg or "sales" in msg:
+         return {"reply": "If your pipeline is empty, focus on Sales (outbound). If you have leads but low trust, focus on Brand Awareness (content)."}
+
+    # --- INTENT 3: MARKET & STRATEGY ---
+    elif "trend" in msg or "market" in msg:
+         return {"reply": "Current market trends favor 'Hyper-Personalization'. Generic outreach is dead; buyers expect you to know their specific pain points before you reach out."}
+
+    elif "time" in msg and "scale" in msg:
+         return {"reply": "Scale only when you have a predictable channel. If you can put $1 in and get $3 out consistently, it's time to scale!"}
+
+    elif "region" in msg or "industry" in msg:
+         return {"reply": "The Tech and Healthcare sectors are showing resilience. North American markets remain the strongest for SaaS adoption right now."}
+
+    # --- INTENT 4: SALES ACTIONS ---
+    elif "next" in msg or "action" in msg:
+         return {"reply": "Check the 'Sales Copilot' page for your prioritized daily actions. Usually, your best next move is to call your highest-scoring Hot Lead."}
+
+    elif "risk" in msg:
+         cur.execute("SELECT COUNT(*) FROM leads WHERE category='Hot'")
+         hot_count = cur.fetchone()[0]
+         conn.close()
+         if hot_count == 0:
+             return {"reply": "⚠️ RISK ALERT: You have 0 Hot leads. Your pipeline is stalling. Verify your campaigns immediately to refill the top of the funnel."}
+         return {"reply": "Your main risk is lead staleness. Ensure no Hot lead waits more than 24 hours for a follow-up."}
+
+    elif "pipeline" in msg or "health" in msg:
+         cur.execute("SELECT category, COUNT(*) FROM leads GROUP BY category")
+         stats = dict(cur.fetchall())
+         conn.close()
+         summary = f"Pipeline Health: {stats.get('Hot', 0)} Hot, {stats.get('Warm', 0)} Warm, {stats.get('Cold', 0)} Cold."
+         return {"reply": f"{summary} A healthy pipeline should look like a funnel (more Cold than Warm, more Warm than Hot)."}
+
+    elif "close" in msg or "deal" in msg:
+         return {"reply": "To close deals faster, use the 'Deal Tools' page. Generous time-limited discounts or offering a 'Pilot Program' are great ways to reduce friction."}
+
+    # --- INTENT 5: GENERAL / EDUCATIONAL ---
+    elif "help" in msg:
+         return {"reply": "I'm your SalesSpark Assistant. I can analyze your leads, suggest campaign strategies, explain sales concepts, or spot risks in your pipeline."}
+
+    elif "work" in msg or "system" in msg:
+         return {"reply": "I run on a deterministic AI engine connected to your local database. I analyze your leads and campaigns in real-time to give specific, safe, and data-backed advice."}
+
+    conn.close()
+    
+    # Fallback
+    return {"reply": "I can help with leads, campaigns, sales strategy, and market insights. Try asking 'Which leads should I focus on?' or 'What is a hot lead?'"}
 
 # ... (Existing Request Models)
 
