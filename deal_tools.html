@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deal Tools - SalesSpark AI</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <nav class="navbar">
+        <a href="index.html">Home</a>
+        <a href="tools.html">Tools</a>
+        <a href="prediction.html">Prediction</a>
+        <a href="sales_copilot.html">Sales Copilot</a>
+        <a href="deal_tools.html">Deal Tools</a>
+        <a href="leads.html">Leads</a>
+    </nav>
+
+    <section class="hero-section"
+        style="padding: 60px 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+        <div class="container">
+            <h1 style="color: white; font-size: 42px; margin-bottom: 15px;">🛠️ Deal Tools</h1>
+            <p style="color: rgba(255,255,255,0.9); font-size: 18px;">Close deals faster with AI-powered strategies and
+                follow-up plans</p>
+        </div>
+    </section>
+
+    <section class="container" style="padding: 40px 20px;">
+
+        <!-- Lead Selector -->
+        <div class="card"
+            style="margin-bottom: 30px; background: linear-gradient(135deg, rgba(102,126,234,0.1), rgba(118,75,162,0.05));">
+            <h3>📋 Select Lead</h3>
+            <select id="lead-selector"
+                style="width: 100%; padding: 12px; font-size: 16px; border-radius: 8px; border: 2px solid var(--primary); background: var(--card); color: var(--text); margin-top: 10px;">
+                <option value="">-- Select a Lead --</option>
+            </select>
+            <p id="lead-selector-status" style="margin-top: 10px; font-size: 14px; color: var(--text-muted);"></p>
+        </div>
+
+        <div class="grid">
+            <!-- Deal Closure Assistant -->
+            <div class="card">
+                <h3>🤝 Deal Closure Assistant</h3>
+                <p style="color: var(--text-muted); margin-bottom: 20px;">Get AI-powered closing strategy for selected
+                    lead</p>
+                <button class="tool-btn" id="deal-btn" onclick="getDealStrategy()" disabled>Get Strategy</button>
+                <div id="deal_output" class="output"></div>
+            </div>
+
+            <!-- Follow-up Planner -->
+            <div class="card">
+                <h3>📅 Follow-up Planner</h3>
+                <p style="color: var(--text-muted); margin-bottom: 20px;">Generate time-sequenced follow-up plan</p>
+                <button class="tool-btn" id="followup-btn" onclick="getFollowupPlan()" disabled>Generate Plan</button>
+                <div id="followup_output" class="output"></div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <p>© 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
+    </footer>
+
+    <script src="js/app.js"></script>
+    <script src="js/deal_tools.js"></script>
+</body>
+
+</html>

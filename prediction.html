@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marketing Intelligence - SalesSpark AI</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <nav class="navbar">
+        <a href="index.html">Home</a>
+        <a href="tools.html">Tools</a>
+        <a href="prediction.html">Prediction</a>
+        <a href="market_intelligence.html">Market Intelligence</a>
+        <a href="sales_copilot.html">Sales Copilot</a>
+        <a href="leads.html">Leads</a>
+    </nav>
+
+    <section class="hero-section"
+        style="padding: 60px 0; background: linear-gradient(135deg, #10b981 0%, #059669 100%);">
+        <div class="container">
+            <h1 style="color: white; font-size: 42px; margin-bottom: 15px;">📊 Marketing Intelligence</h1>
+            <p style="color: rgba(255,255,255,0.9); font-size: 18px;">Predict campaign performance with AI-driven
+                probability models</p>
+        </div>
+    </section>
+
+    <section class="container" style="padding: 40px 20px;">
+        <div class="card">
+            <h3>🤖 Campaign Performance Prediction</h3>
+            <div class="input-group">
+                <label>Target Platform</label>
+                <select id="pred_platform">
+                    <option value="LinkedIn">LinkedIn</option>
+                    <option value="Email">Email</option>
+                    <option value="Instagram">Instagram</option>
+                    <option value="Twitter">Twitter</option>
+                </select>
+            </div>
+            <div class="input-group">
+                <label>Campaign Goal</label>
+                <select id="pred_goal">
+                    <option value="Leads">Lead Generation</option>
+                    <option value="Sales">Direct Sales</option>
+                    <option value="Awareness">Brand Awareness</option>
+                </select>
+            </div>
+            <button class="tool-btn" onclick="predictCampaign()">Predict Outcomes</button>
+            <div id="pred_output" class="output"></div>
+        </div>
+    </section>
+
+    <footer>
+        <p>© 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
+    </footer>
+
+    <script src="js/app.js"></script>
+    <script src="js/prediction_page.js"></script>
+</body>
+
+</html>

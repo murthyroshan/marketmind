@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Tools | SalesSpark AI</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+
+    <nav class="navbar">
+        <a href="index.html">Home</a>
+        <a href="tools.html">Tools</a>
+        <a href="prediction.html">Prediction</a>
+        <a href="market_intelligence.html">Market Intelligence</a>
+        <a href="sales_copilot.html">Sales Copilot</a>
+        <a href="leads.html">Leads</a>
+    </nav>
+
+    <section>
+        <h2 class="section-title">AI Logic Engines</h2>
+        <div class="grid">
+
+            <!-- 1. Campaign Generator -->
+            <div class="card" id="campaigns">
+                <h3>🚀 Campaign Generator</h3>
+                <div class="input-group">
+                    <input id="cG_product" placeholder="Product Name">
+                </div>
+                <div class="input-group">
+                    <input id="cG_audience" placeholder="Target Audience">
+                </div>
+                <div class="input-group">
+                    <select id="cG_platform">
+                        <option value="LinkedIn">LinkedIn (B2B)</option>
+                        <option value="Instagram">Instagram (B2C)</option>
+                        <option value="Email">Email Drip</option>
+                    </select>
+                </div>
+                <div class="input-group">
+                    <select id="cG_goal">
+                        <option value="Awareness">Brand Awareness</option>
+                        <option value="Leads">Lead Generation</option>
+                        <option value="Sales">Direct Sales</option>
+                    </select>
+                </div>
+                <button class="tool-btn" onclick="generateCampaign()">Generate Strategy</button>
+                <div id="cG_output" class="output"></div>
+            </div>
+
+            <!-- 2. Sales Pitch Generator -->
+            <div class="card" id="sales">
+                <h3>🎯 Sales Pitch Generator</h3>
+                <div class="input-group"><input id="sP_product" placeholder="Solution/Product"></div>
+                <div class="input-group"><input id="sP_client" placeholder="Client Industry/Role"></div>
+                <button class="tool-btn" onclick="generatePitch()">Craft Pitch</button>
+                <div id="sP_output" class="output"></div>
+            </div>
+
+            <!-- 3. Show Lead Scoring -->
+            <div class="card">
+                <h3>⚖️ Intelligent Lead Scoring</h3>
+                <div class="input-group"><input id="lS_budget" type="number" placeholder="Budget ($)"></div>
+                <div class="input-group"><input id="lS_interest" type="number" placeholder="Interest (1-10)"></div>
+                <div class="input-group">
+                    <select id="lS_size">
+                        <option value="Startup">Startup (< 50 emp)</option>
+                        <option value="Mid">Mid-Market (50-500)</option>
+                        <option value="Enterprise">Enterprise (500+)</option>
+                    </select>
+                </div>
+                <button class="tool-btn" onclick="scoreLead()">Analyze Lead</button>
+                <div id="lS_output" class="output"></div>
+            </div>
+
+            <!-- 4. Market Analysis -->
+            <div class="card" id="analysis">
+                <h3>📊 Market Analysis</h3>
+                <div class="input-group"><input id="mA_industry" placeholder="Industry Sector"></div>
+                <button class="tool-btn" onclick="analyzeMarket()">Scan Market</button>
+                <div id="mA_output" class="output"></div>
+            </div>
+
+            <!-- 5. Channel Content -->
+            <div class="card">
+                <h3>📱 Channel Content Gen</h3>
+                <div class="input-group"><input id="cc_product" placeholder="Product/Feature"></div>
+                <div class="input-group">
+                    <select id="cc_platform">
+                        <option value="LinkedIn">LinkedIn Post</option>
+                        <option value="Twitter">X / Twitter Thread</option>
+                        <option value="Instagram">Instagram Caption</option>
+                    </select>
+                </div>
+                <button class="tool-btn" onclick="generateContent()">Create Content</button>
+                <div id="cc_output" class="output"></div>
+            </div>
+
+            <!-- 6. AI Outreach -->
+            <div class="card">
+                <h3>📧 AI Outreach Generator</h3>
+                <div class="input-group"><input id="ao_product" placeholder="Offering"></div>
+                <div class="input-group"><input id="ao_prospect" placeholder="Prospect Role"></div>
+                <div class="input-group">
+                    <select id="ao_type">
+                        <option value="Cold">Cold Outreach</option>
+                        <option value="FollowUp">Follow Up</option>
+                        <option value="Closing">Closing Push</option>
+                    </select>
+                </div>
+                <button class="tool-btn" onclick="generateOutreach()">Draft Message</button>
+                <div id="ao_output" class="output"></div>
+            </div>
+
+        </div>
+    </section>
+
+    <footer>
+        <p>© 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
+    </footer>
+
+    <script src="js/app.js"></script>
+    <script src="js/generators.js"></script>
+</body>
+
+</html>

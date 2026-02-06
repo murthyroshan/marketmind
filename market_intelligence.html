@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Intelligence | SalesSpark AI</title>
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+
+    <nav class="navbar">
+        <a href="index.html">Home</a>
+        <a href="tools.html">Tools</a>
+        <a href="prediction.html">Prediction</a>
+        <a href="market_intelligence.html">Market Intelligence</a>
+        <a href="sales_copilot.html">Sales Copilot</a>
+        <a href="leads.html">Leads</a>
+    </nav>
+
+    <section class="hero-section"
+        style="padding: 60px 0; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);">
+        <div class="container">
+            <h1 style="color: white; font-size: 42px; margin-bottom: 15px;">📊 Market Intelligence</h1>
+            <p style="color: rgba(255,255,255,0.9); font-size: 18px;">Real-time market analytics and trend forecasting.
+            </p>
+        </div>
+    </section>
+
+    <section class="container" style="padding: 40px 20px;">
+
+        <!-- Input Controls -->
+        <div class="card" style="margin-bottom: 30px;">
+            <h3 style="margin-bottom: 20px;">🔍 Analyze Market</h3>
+            <div style="display: flex; gap: 20px; align-items: flex-end;">
+                <div class="input-group" style="flex: 2; margin-bottom: 0;">
+                    <label style="color: var(--text-muted); font-size: 12px; margin-bottom: 5px; display: block;">Target
+                        Industry</label>
+                    <select id="mi_industry">
+                        <option value="saas">SaaS</option>
+                        <option value="finance">Finance</option>
+                        <option value="technology">Technology</option>
+                        <option value="healthcare">Healthcare</option>
+                        <option value="ecommerce">E-commerce</option>
+                    </select>
+                </div>
+                <div class="input-group" style="flex: 1; margin-bottom: 0;">
+                    <label
+                        style="color: var(--text-muted); font-size: 12px; margin-bottom: 5px; display: block;">Region</label>
+                    <select id="mi_region">
+                        <option value="Global">Global</option>
+                        <option value="NA">North America</option>
+                        <option value="EU">Europe</option>
+                        <option value="APAC">Asia Pacific</option>
+                    </select>
+                </div>
+                <div class="input-group" style="flex: 1; margin-bottom: 0;">
+                    <label style="color: var(--text-muted); font-size: 12px; margin-bottom: 5px; display: block;">Time
+                        Horizon</label>
+                    <select id="mi_horizon">
+                        <option value="Short">Short Term (3m)</option>
+                        <option value="Mid" selected>Mid Term (6m)</option>
+                        <option value="Long">Long Term (1y)</option>
+                    </select>
+                </div>
+                <button class="tool-btn" onclick="analyzeMarketTrends()"
+                    style="flex: 1; margin-bottom: 0; padding: 12px;">Analyze</button>
+            </div>
+        </div>
+
+        <!-- Charts Grid -->
+        <div class="grid">
+
+            <!-- Graph 1: Demand Trend -->
+            <div class="card">
+                <h3>📈 Demand Trend Over Time</h3>
+                <div style="height: 250px;">
+                    <canvas id="chartDemand"></canvas>
+                </div>
+            </div>
+
+            <!-- Graph 2: Competition vs Opportunity -->
+            <div class="card">
+                <h3>📊 Market Matrix</h3>
+                <div style="height: 250px;">
+                    <canvas id="chartMatrix"></canvas>
+                </div>
+            </div>
+
+            <!-- Graph 3: Channel Effectiveness -->
+            <div class="card">
+                <h3>📉 Channel Effectiveness</h3>
+                <div style="height: 250px;">
+                    <canvas id="chartChannels"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- AI Insight -->
+        <div id="mi_insight_box" class="card"
+            style="margin-top: 30px; display: none; background: linear-gradient(145deg, #1e293b, #0f172a); border-left: 4px solid var(--secondary);">
+            <h3 style="color: var(--secondary);">🧠 AI Market Insight</h3>
+            <p id="mi_insight_text" style="font-size: 16px; line-height: 1.6; color: white;">
+                Loading insight...
+            </p>
+        </div>
+
+    </section>
+
+    <footer>
+        <p>© 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
+    </footer>
+
+    <script src="js/market_intelligence.js"></script>
+</body>
+
+</html>
