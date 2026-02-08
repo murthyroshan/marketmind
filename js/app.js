@@ -60,7 +60,14 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // --- Phase 6: AI Chatbot Injection ---
-// --- Phase 6: AI Chatbot Injection ---
+// --- Phase 6: AI Chatbot Injection (Upgraded) ---
+
+function generateSessionId() {
+    return 'sess_' + Math.random().toString(36).substr(2, 9);
+}
+
+const CHAT_SESSION_ID = generateSessionId();
+
 function initChatbot() {
     // 1. Inject HTML with Premium Structure
     const chatHTML = `
@@ -76,7 +83,7 @@ function initChatbot() {
                         <span class="header-subtitle">Your sales intelligence copilot</span>
                     </div>
                     <button class="chat-close-btn" onclick="toggleChat()">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="18" y1="6" x2="6" y2="18"></line>
                             <line x1="6" y1="6" x2="18" y2="18"></line>
                         </svg>
@@ -89,7 +96,12 @@ function initChatbot() {
                     <div class="chat-message bot">
                         <div class="message-content">
                             <div class="bot-avatar">🤖</div>
-                            <div class="bubble">👋 Hi! I'm your AI Sales Assistant. Ask me about your leads or strategies!</div>
+                            <div class="bubble">
+                                👋 Hi! I'm your AI Sales Analyst.<br>
+                                I have access to your <strong>real-time pipeline data</strong>.
+                                <br><br>
+                                <em>Ask me "How is my pipeline?" or "Who should I call?"</em>
+                            </div>
                         </div>
                     </div>
                     <!-- Suggestions Panel -->
@@ -97,12 +109,11 @@ function initChatbot() {
                         <div class="suggestion-chip" onclick="sendSuggestion(this)">🔍 Which leads to focus on?</div>
                         <div class="suggestion-chip" onclick="sendSuggestion(this)">📊 Pipeline risks?</div>
                         <div class="suggestion-chip" onclick="sendSuggestion(this)">🚀 Campaign strategy?</div>
-                        <div class="suggestion-chip" onclick="sendSuggestion(this)">📈 Check sales velocity</div>
                     </div>
                 </div>
                 <div class="chat-footer">
                     <div class="input-wrapper">
-                        <input type="text" id="chatInput" class="chat-input" placeholder="Ask anything..." onkeypress="handleChatEnter(event)">
+                        <input type="text" id="chatInput" class="chat-input" placeholder="Ask your analyst..." onkeypress="handleChatEnter(event)">
                         <button class="chat-send-btn" onclick="sendChatMessage()">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                 <line x1="22" y1="2" x2="11" y2="13"></line>
@@ -133,10 +144,7 @@ function handleChatEnter(e) {
 }
 
 function sendSuggestion(el) {
-    const text = el.innerText;
-    // Don't auto-send, just fill input or send directly based on preference. 
-    // User requested "Suggested Messages" feature usually implies checking content.
-    // But for quick prompts, sending directly is often better UX. Let's send directly.
+    const text = el.innerText.replace(/^[🔍📊🚀🧠✨]\s*/, ''); // Remove emoji prefix
     addMessage(text, 'user');
 
     // Hide suggestions
@@ -175,19 +183,50 @@ async function processBotResponse(msg) {
         const res = await fetch('http://127.0.0.1:8000/chat', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: msg })
+            body: JSON.stringify({
+                message: msg,
+                session_id: CHAT_SESSION_ID
+            })
         });
 
         const data = await res.json();
 
         removeTyping(typingId);
+
+        // 1. Show Main Reply
         addMessage(data.reply, 'bot');
+
+        // 2. Show Follow-up Question (if exists)
+        if (data.follow_up) {
+            setTimeout(() => {
+                addMessage(`<em>${data.follow_up}</em>`, 'bot');
+            }, 600);
+        }
+
+        // 3. Update Suggestions
+        if (data.suggestions && data.suggestions.length > 0) {
+            updateSuggestions(data.suggestions);
+        }
 
     } catch (e) {
         console.error(e);
         removeTyping(typingId);
         addMessage("⚠️ Error: Could not connect to SalesSpark Brain.", 'bot');
     }
+}
+
+function updateSuggestions(items) {
+    const container = document.getElementById('chatSuggestions');
+    if (!container) return;
+
+    const emojis = ['🔍', '📊', '🚀', '💡', '🧠'];
+
+    container.innerHTML = items.map((item, i) =>
+        `<div class="suggestion-chip" onclick="sendSuggestion(this)">${emojis[i % emojis.length]} ${item}</div>`
+    ).join('');
+
+    container.style.display = 'flex';
+    setTimeout(() => container.style.opacity = '1', 100);
 }
 
 function addMessage(text, sender) {

@@ -135,6 +135,7 @@ class FollowupRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str = "default_session"
 
 # ==================== PHASE 1: CORE GENERATORS ====================
 
@@ -268,100 +269,149 @@ SalesSpark AI Team
     }
 
 # 7. AI Chatbot
-@app.post("/chat")
-def chat_assistant(req: ChatRequest):
-    msg = req.message.lower()
-    
+# --- Session Management ---
+SESSIONS = {}  # In-memory session store: {session_id: {history: [], last_intent: str, last_data: dict}}
+
+# --- Helper: Get Real-Time Metrics ---
+def get_sales_metrics():
     conn = get_db()
     cur = conn.cursor()
+    
+    # Leads
+    cur.execute("SELECT COUNT(*) FROM leads")
+    total_leads = cur.fetchone()[0]
+    
+    cur.execute("SELECT COUNT(*) FROM leads WHERE category='Hot'")
+    hot_leads = cur.fetchone()[0]
+    
+    cur.execute("SELECT COUNT(*) FROM leads WHERE category='Warm'")
+    warm_leads = cur.fetchone()[0]
 
-    # --- INTENT 1: LEADS & SALES (CORE) ---
-    if "lead" in msg or "focus" in msg or "prioritize" in msg:
-        # "Which leads should I focus on?"
-        cur.execute("SELECT company, category, score FROM leads ORDER BY score DESC LIMIT 3")
-        leads = cur.fetchall()
-        if not leads:
-            conn.close()
-            return {"reply": "I don't see any leads yet. Use the Lead Scoring tool to generate some first."}
-        lead_list = ", ".join([f"{l[0]} ({l[1]}, {l[2]})" for l in leads])
-        reply = f"Based on urgency, prioritize: {lead_list}. These show the highest engagement right now."
-        conn.close()
-        return {"reply": reply}
+    cur.execute("SELECT AVG(score) FROM leads")
+    avg_score = cur.fetchone()[0] or 0
+    
+    # Campaigns
+    cur.execute("SELECT COUNT(*) FROM campaigns")
+    total_campaigns = cur.fetchone()[0]
 
-    elif "hot" in msg and "lead" in msg:
-        return {"reply": "A 'Hot Lead' (Score 80-100) is ready to buy. They have high budget availability and demonstrated strong interest. Call them immediately."}
-
-    elif "warm" in msg and "lead" in msg:
-        return {"reply": "A 'Warm Lead' (Score 50-79) is interested but needs nurturing. Send them a case study or a value-based email to build trust."}
-
-    elif "cold" in msg:
-        if "what" in msg or "mean" in msg:
-             return {"reply": "A 'Cold Lead' (Score <50) isn't ready yet. Don't push for a sale; instead, add them to a monthly newsletter to keep your brand top-of-mind."}
-        # "Why are most of my leads cold?" / "What to do with cold leads?"
-        cur.execute("SELECT COUNT(*) FROM leads WHERE category='Cold'")
-        cold_count = cur.fetchone()[0]
-        conn.close()
-        return {"reply": f"You currently have {cold_count} cold leads. This is normal! Focus on high-volume, low-effort automation (like email drips) to warm them up over time."}
-
-    elif "quality" in msg:
-         return {"reply": "To improve lead quality, try narrowing your campaign targeting. High-intent leads come from specific problem-solution matching, not broad blasts."}
-
-    # --- INTENT 2: CAMPAIGNS & MARKETING ---
-    elif "strategy" in msg and "campaign" in msg:
-         return {"reply": "For B2B SaaS, a 'LinkedIn Thought Leadership' strategy works best. For B2C, try 'Instagram Visual Storytelling'. Check our Campaign Generator for a full plan."}
-
-    elif "platform" in msg:
-         return {"reply": "If you're selling high-ticket items ($10k+), prioritize LinkedIn. For volume sales or e-commerce, Instagram and Twitter/X drive better cost-per-click."}
-
-    elif "conversion" in msg:
-         return {"reply": "Low conversions often mean your offer isn't matching the audience's pain point. Try A/B testing your Call to Action (CTA) or refining your value proposition."}
-
-    elif "brand" in msg or "sales" in msg:
-         return {"reply": "If your pipeline is empty, focus on Sales (outbound). If you have leads but low trust, focus on Brand Awareness (content)."}
-
-    # --- INTENT 3: MARKET & STRATEGY ---
-    elif "trend" in msg or "market" in msg:
-         return {"reply": "Current market trends favor 'Hyper-Personalization'. Generic outreach is dead; buyers expect you to know their specific pain points before you reach out."}
-
-    elif "time" in msg and "scale" in msg:
-         return {"reply": "Scale only when you have a predictable channel. If you can put $1 in and get $3 out consistently, it's time to scale!"}
-
-    elif "region" in msg or "industry" in msg:
-         return {"reply": "The Tech and Healthcare sectors are showing resilience. North American markets remain the strongest for SaaS adoption right now."}
-
-    # --- INTENT 4: SALES ACTIONS ---
-    elif "next" in msg or "action" in msg:
-         return {"reply": "Check the 'Sales Copilot' page for your prioritized daily actions. Usually, your best next move is to call your highest-scoring Hot Lead."}
-
-    elif "risk" in msg:
-         cur.execute("SELECT COUNT(*) FROM leads WHERE category='Hot'")
-         hot_count = cur.fetchone()[0]
-         conn.close()
-         if hot_count == 0:
-             return {"reply": "⚠️ RISK ALERT: You have 0 Hot leads. Your pipeline is stalling. Verify your campaigns immediately to refill the top of the funnel."}
-         return {"reply": "Your main risk is lead staleness. Ensure no Hot lead waits more than 24 hours for a follow-up."}
-
-    elif "pipeline" in msg or "health" in msg:
-         cur.execute("SELECT category, COUNT(*) FROM leads GROUP BY category")
-         stats = dict(cur.fetchall())
-         conn.close()
-         summary = f"Pipeline Health: {stats.get('Hot', 0)} Hot, {stats.get('Warm', 0)} Warm, {stats.get('Cold', 0)} Cold."
-         return {"reply": f"{summary} A healthy pipeline should look like a funnel (more Cold than Warm, more Warm than Hot)."}
-
-    elif "close" in msg or "deal" in msg:
-         return {"reply": "To close deals faster, use the 'Deal Tools' page. Generous time-limited discounts or offering a 'Pilot Program' are great ways to reduce friction."}
-
-    # --- INTENT 5: GENERAL / EDUCATIONAL ---
-    elif "help" in msg:
-         return {"reply": "I'm your SalesSpark Assistant. I can analyze your leads, suggest campaign strategies, explain sales concepts, or spot risks in your pipeline."}
-
-    elif "work" in msg or "system" in msg:
-         return {"reply": "I run on a deterministic AI engine connected to your local database. I analyze your leads and campaigns in real-time to give specific, safe, and data-backed advice."}
+    # Pipeline Health
+    if total_leads == 0:
+        health = "Empty"
+    elif hot_leads >= 3 and avg_score > 50:
+        health = "Healthy"
+    elif hot_leads == 0:
+        health = "At Risk"
+    else:
+        health = "Needs Nurturing"
 
     conn.close()
     
-    # Fallback
-    return {"reply": "I can help with leads, campaigns, sales strategy, and market insights. Try asking 'Which leads should I focus on?' or 'What is a hot lead?'"}
+    return {
+        "total_leads": total_leads,
+        "hot_leads": hot_leads,
+        "warm_leads": warm_leads,
+        "avg_score": round(avg_score, 1),
+        "total_campaigns": total_campaigns,
+        "pipeline_health": health
+    }
+
+# --- 7. AI Chatbot Endpoint (Upgraded) ---
+@app.post("/chat")
+def chat_assistant(req: ChatRequest):
+    session_id = req.session_id
+    msg = req.message.lower()
+    
+    # Initialize Session
+    if session_id not in SESSIONS:
+        SESSIONS[session_id] = {"history": [], "last_intent": None, "context_data": {}}
+    
+    session = SESSIONS[session_id]
+    metrics = get_sales_metrics()
+    
+    response_text = ""
+    follow_up = ""
+    suggestions = []
+    current_intent = "general"
+
+    # --- INTENT LOGIC ---
+
+    # 1. LEADS & FOCUS
+    if any(k in msg for k in ["focus", "prioritize", "start", "lead"]):
+        current_intent = "leads_focus"
+        conn = get_db()
+        cur = conn.cursor()
+        cur.execute("SELECT id, company, category, score FROM leads ORDER BY score DESC LIMIT 3")
+        top_leads = cur.fetchall()
+        conn.close()
+        
+        if not top_leads:
+            response_text = "Your lead list is currently empty. I can't recommend a focus until we generate some leads."
+            follow_up = "Should I simulate some demo leads for you?"
+            suggestions = ["Generate demo leads", "How does scoring work?", "Campaign strategy"]
+        else:
+            lead_details = ", ".join([f"Lead #{l[0]} ({l[1]}, {l[3]}/100)" for l in top_leads])
+            response_text = f"Based on score and intent, your top priorities are: {lead_details}. These have the highest probability of closing this week."
+            follow_up = "Would you like a closing strategy for the top lead?"
+            suggestions = ["Get closing strategy", "Draft email to Lead #1", "Pipeline health"]
+            
+            # Store for context
+            session["context_data"]["top_lead_id"] = top_leads[0][0]
+
+    # 2. PIPELINE HEALTH & RISKS
+    elif any(k in msg for k in ["health", "pipeline", "risk", "status"]):
+        current_intent = "pipeline_health"
+        
+        if metrics["pipeline_health"] == "At Risk":
+            response_text = f"⚠️ **Alert:** Your pipeline is At Risk. You have 0 Hot leads and an average score of {metrics['avg_score']}. You need to refill the top of the funnel immediately."
+            follow_up = "Shall I recommend a lead generation campaign?"
+            suggestions = ["Generate campaign", "Why is score low?", "Show all leads"]
+        elif metrics["pipeline_health"] == "Empty":
+            response_text = "Your pipeline is empty. We need to launch campaigns to generate initial data."
+            follow_up = "Ready to create your first campaign?"
+            suggestions = ["Create campaign", "Run simulation", "Market trends"]
+        else:
+            response_text = f"✅ **Healthy:** You have {metrics['hot_leads']} Hot leads and {metrics['warm_leads']} Warm leads. Average lead quality is {metrics['avg_score']}/100."
+            follow_up = "Do you want to focus on closing the hot leads?"
+            suggestions = ["Closing tips", "Nurture warm leads", "Market analysis"]
+
+    # 3. EXPLAIN / WHY (Context Aware)
+    elif any(k in msg for k in ["why", "explain", "reason", "how"]):
+        last_intent = session.get("last_intent")
+        
+        if last_intent == "leads_focus":
+            response_text = "I prioritized those leads because they combine high Budget fit (> $50k) with strong Intent signals (web visits, email opens). In our model, Score = Budget(40%) + Interest(40%) + Baseline(20%)."
+            follow_up = "Want to see the full score breakdown?"
+            suggestions = ["Score breakdown", "Contact Lead #1", "Next actions"]
+        elif last_intent == "pipeline_health":
+            response_text = f"I flagged the pipeline because 'Hot Leads' (Score > 80) are the strongest predictor of revenue. You currently have {metrics['hot_leads']}, and our target is at least 3."
+            follow_up = "Should we draft a campaign to fix this?"
+        else:
+            response_text = "I base my recommendations on your real-time database metrics: Lead Scores, Campaign Performance, and Pipeline Volume. I look for the path of highest revenue probability."
+            follow_up = "Ask me to analyze your top lead."
+            suggestions = ["Analyze top lead", "Pipeline summary", "Campaign ideas"]
+
+    # 4. CAMPAIGNS & STRATEGY
+    elif any(k in msg for k in ["strategy", "campaign", "marketing", "grow"]):
+        current_intent = "marketing_strategy"
+        response_text = f"You currently have {metrics['total_campaigns']} active campaigns. To grow, I recommend a 'Competitor Conquesting' campaign on LinkedIn to target dissatisfied users in your sector."
+        follow_up = "Do you want me to draft the ad copy?"
+        suggestions = ["Draft ad copy", "Predict campaign ROI", "Analyze market"]
+
+    # 5. GENERAL / GREETING
+    else:
+        response_text = f"I'm your SalesSpark Analyst. I track your {metrics['total_leads']} leads and {metrics['total_campaigns']} campaigns in real-time."
+        follow_up = "Ask me: 'Who should I call today?' or 'How is my pipeline?'"
+        suggestions = ["Who to call?", "Pipeline risks", "Draft cold email"]
+
+    # Update Session
+    session["history"].append({"user": msg, "bot": response_text})
+    session["last_intent"] = current_intent
+    
+    return {
+        "reply": response_text,
+        "follow_up": follow_up,
+        "suggestions": suggestions
+    }
 
 # ... (Existing Request Models)
 
