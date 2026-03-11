@@ -53,9 +53,9 @@ function getCurrentPage() {
     const path = window.location.pathname.toLowerCase();
     if (path.includes('leads')) return 'leads';
     if (path.includes('market_intelligence')) return 'market';
-    if (path.includes('sales_copilot')) return 'copilot';
+    if (path.includes('sales_copilot')) return 'sales_copilot';
     if (path.includes('prediction')) return 'prediction';
-    if (path.includes('tools')) return 'campaigns';
+    if (path.includes('tools')) return 'tools';
     return 'home';
 }
 
@@ -70,28 +70,20 @@ function addToHistory(role, content) {
 
 // ── Navigation action handler ──────────────────────────────────────────────────
 const PAGE_URLS = {
+    'sales_copilot': 'sales_copilot.html',
     'leads': 'leads.html',
-    'campaigns': 'tools.html',
-    'pitch': 'tools.html',
-    'email': 'tools.html',
-    'social': 'tools.html',
-    'market': 'market_intelligence.html',
+    'tools': 'tools.html',
     'prediction': 'prediction.html',
-    'deal-tools': 'leads.html#deal-tools',
-    'copilot': 'sales_copilot.html',
+    'market': 'market_intelligence.html',
 };
 
 // Page display names for a friendlier UX message
 const PAGE_LABELS = {
+    'sales_copilot': 'Sales Copilot',
     'leads': 'Leads',
-    'campaigns': 'Campaign Generator',
-    'pitch': 'Pitch Generator',
-    'email': 'Email Outreach',
-    'social': 'Social Media Generator',
+    'tools': 'Tools',
+    'prediction': 'Prediction',
     'market': 'Market Intelligence',
-    'prediction': 'Campaign Prediction',
-    'deal-tools': 'Deal Tools',
-    'copilot': 'Sales Copilot',
 };
 
 function handleNavigationAction(data) {
@@ -154,15 +146,11 @@ const INSTANT_PRODUCT =
 // ── Client-side navigation intent detection (instant, no API call) ────────────
 // Maps each page key to a regex that matches common navigation phrasings.
 const NAVIGATION_INTENTS = {
-    'leads':      /\b(show|open|go\s*to|take\s*me\s*to|view|see)\s*(my\s*)?(leads?|lead\s*list|lead\s*manager)\b/i,
-    'campaigns':  /\b(open|go\s*to|show|launch|create|generate)\s*(a\s*)?(campaigns?|campaign\s*gen(?:erator)?|marketing)\b/i,
-    'pitch':      /\b(open|show|create|generate|write)\s*(a\s*)?(pitch|sales\s*pitch|pitch\s*gen(?:erator)?)\b/i,
-    'email':      /\b(open|show|write|generate|create)\s*(a\s*)?(email|email\s*outreach|outreach\s*email)\b/i,
-    'social':     /\b(open|show|create|generate)\s*(a\s*)?(social|social\s*media|post|hashtag)\b/i,
-    'market':     /\b(open|show|go\s*to|take\s*me\s*to|view)\s*(market|market\s*intel(?:ligence)?|market\s*insights?|intelligence)\b/i,
-    'prediction': /\b(open|show|go\s*to|run|view)\s*(a\s*)?(prediction|campaign\s*pred(?:iction)?)\b/i,
-    'deal-tools': /\b(open|show|go\s*to|view)\s*(deal\s*tools?|follow.?up\s*planner|closing\s*assistant|closer)\b/i,
-    'copilot':    /\b(open|show|go\s*to|take\s*me\s*to)\s*(sales\s*)?copilot\b/i,
+    'sales_copilot': /\b(open|show|go\s*to|take\s*me\s*to)\s*(sales\s*)?copilot\b/i,
+    'leads': /\b(open|show|go\s*to|take\s*me\s*to|view|see)\s*(my\s*)?leads?\b/i,
+    'tools': /\b(open|show|go\s*to|take\s*me\s*to)\s*(tools?|campaign\s*generator)\b/i,
+    'prediction': /\b(open|show|go\s*to|take\s*me\s*to)\s*(prediction|prediction\s*page|campaign\s*prediction)\b/i,
+    'market': /\b(open|show|go\s*to|take\s*me\s*to)\s*(market|market\s*insights?|market\s*intelligence)\b/i,
 };
 
 function detectNavigationIntent(msg) {
@@ -183,7 +171,7 @@ function detectNavigationIntent(msg) {
 const FEATURE_GUIDANCE_RE = /\b(how\s+(do\s+i|can\s+i|to)|how\s+does?|guide\s+me|help\s+me\s+(use|with)|what\s+can\s+i\s+do|explain)\b/i;
 
 const FEATURE_GUIDANCE = {
-    campaigns: (
+    tools: (
         "📋 <strong>Campaign Generator — How to use:</strong><br>" +
         "1. Go to the <strong>Tools</strong> page.<br>" +
         "2. Select your target industry and audience in the Campaign Generator card.<br>" +
@@ -198,7 +186,7 @@ const FEATURE_GUIDANCE = {
         "• ❄️ <strong>Cold</strong> (< 55) — Re-engage with a campaign or discount offer.<br><br>" +
         "Scroll down to <strong>Deal Tools</strong> on this page to get AI-powered closing strategies for any lead."
     ),
-    copilot: (
+    sales_copilot: (
         "🤖 <strong>Sales Copilot — How to use:</strong><br>" +
         "• The KPI cards at the top show your live pipeline (total, hot, warm, cold leads).<br>" +
         "• The <em>AI Insights</em> panel gives you data-driven recommendations updated in real time.<br>" +
@@ -342,7 +330,6 @@ async function sendChatMessage() {
 }
 
 async function processBotResponse(msg) {
-    // ── 1. Client-side greeting shortcut (instant, no backend round-trip) ─────
     if (isGreeting(msg)) {
         addToHistory('user', msg);
         addToHistory('assistant', INSTANT_GREETING);
@@ -350,7 +337,6 @@ async function processBotResponse(msg) {
         return;
     }
 
-    // ── 2. Client-side product question shortcut (instant, no backend round-trip)
     if (isProductQuestion(msg)) {
         addToHistory('user', msg);
         addToHistory('assistant', INSTANT_PRODUCT);
@@ -358,17 +344,15 @@ async function processBotResponse(msg) {
         return;
     }
 
-    // ── 3. Client-side navigation intent (instant, no backend round-trip) ─────
     const navIntent = detectNavigationIntent(msg);
     if (navIntent) {
         addToHistory('user', msg);
-        const navReply = `Opening <strong>${navIntent.label}</strong>…`;
+        const navReply = `Opening <strong>${navIntent.label}</strong>...`;
         addToHistory('assistant', navReply);
         handleNavigationAction({ page: navIntent.page, url: navIntent.url, response: navReply });
         return;
     }
 
-    // ── 4. Client-side feature guidance (instant, page-aware, no backend) ─────
     const page = getCurrentPage();
     const guidance = detectFeatureGuidance(msg, page);
     if (guidance) {
@@ -387,8 +371,8 @@ async function processBotResponse(msg) {
             body: JSON.stringify({
                 message: msg,
                 session_id: CHAT_SESSION_ID,
-                current_page: getCurrentPage(),   // ← page awareness
-                history: chatHistory.slice(-6),   // ← last 3 turns (token optimized)
+                current_page: getCurrentPage(),
+                history: chatHistory.slice(-6),
             })
         });
 
@@ -396,31 +380,67 @@ async function processBotResponse(msg) {
         removeTyping(typingId);
 
         if (data.error) {
-            addMessage(`⚠️ ${data.error}`, 'bot');
+            addMessage(`Error: ${data.error}`, 'bot');
             return;
         }
 
-        // ── Navigation action ──────────────────────────────────────────────────
         if (data.action === 'navigate') {
             addToHistory('user', msg);
             addToHistory('assistant', data.response || '');
             handleNavigationAction(data);
+            if (Array.isArray(data.suggestions) && data.suggestions.length) {
+                updateSuggestions(data.suggestions);
+            }
             return;
         }
 
-        // ── Normal text response ───────────────────────────────────────────────
-        const reply = data.response || '⚠️ No response received.';
+        if (data.action === 'tool_result' || data.action === 'multi_step') {
+            const reply = formatToolResult(data);
+            addMessage(reply, 'bot');
+            addToHistory('user', msg);
+            addToHistory('assistant', data.response || reply);
+            if (Array.isArray(data.suggestions) && data.suggestions.length) {
+                updateSuggestions(data.suggestions);
+            }
+            return;
+        }
+
+        const reply = data.response || 'No response received.';
         addMessage(reply, 'bot');
         addToHistory('user', msg);
         addToHistory('assistant', reply);
 
+        if (Array.isArray(data.suggestions) && data.suggestions.length) {
+            updateSuggestions(data.suggestions);
+        }
+
     } catch (e) {
         console.error('[Chat] Network error:', e);
         removeTyping(typingId);
-        addMessage('⚠️ Could not connect to SalesSpark Brain. Is the server running?', 'bot');
+        addMessage('Could not connect to SalesSpark Brain. Is the server running?', 'bot');
     }
 }
 
+function formatToolResult(data) {
+    if (data.action === 'multi_step' && Array.isArray(data.steps)) {
+        return `<strong>${data.response || 'Workflow generated.'}</strong><br><br>${data.steps.join('<br>')}`;
+    }
+
+    const result = data.result || {};
+    if (data.tool === 'generate_campaign') {
+        return `<strong>${data.response}</strong><br><br><b>Theme:</b> ${result.theme || ''}<br><b>Strategy:</b> ${result.marketing_strategy || ''}<br><b>CTA:</b> ${result.cta || ''}`;
+    }
+    if (data.tool === 'generate_email') {
+        return `<strong>${data.response}</strong><br><br><b>Subject:</b> ${result.subject || ''}<br><pre>${result.body || ''}</pre>`;
+    }
+    if (data.tool === 'generate_pitch') {
+        return `<strong>${data.response}</strong><br><br><b>Opening:</b> ${result.opening_hook || ''}<br><b>Positioning:</b> ${result.product_positioning || ''}<br><b>Closing:</b> ${result.closing_statement || ''}`;
+    }
+    if (data.tool === 'analyze_leads') {
+        return `<strong>${data.response}</strong>`;
+    }
+    return data.response || 'Done.';
+}
 // ── UI helpers ─────────────────────────────────────────────────────────────────
 function updateSuggestions(items) {
     const container = document.getElementById('chatSuggestions');
@@ -464,3 +484,11 @@ function removeTyping(id) {
     const el = document.getElementById(id);
     if (el) el.remove();
 }
+
+
+
+
+
+
+
+

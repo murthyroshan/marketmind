@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import random
+import re
 import sqlite3
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
@@ -1163,6 +1164,218 @@ def followup_plan(req: FollowupRequest):
     log_interaction(req.lead_id, "followup_plan", result)
     return result
 
+NAVIGATION_PATTERNS = [
+    (re.compile(r"\b(open|show|go to|take me to)\s+(sales\s+)?copilot\b", re.IGNORECASE), "sales_copilot"),
+    (re.compile(r"\b(open|show|go to|take me to)\s+(my\s+)?leads?\b", re.IGNORECASE), "leads"),
+    (re.compile(r"\b(open|show|go to|take me to)\s+(tools?|campaign generator)\b", re.IGNORECASE), "tools"),
+    (re.compile(r"\b(open|show|go to|take me to)\s+(prediction|prediction page|campaign prediction)\b", re.IGNORECASE), "prediction"),
+    (re.compile(r"\b(open|show|go to|take me to)\s+(market|market insights|market intelligence)\b", re.IGNORECASE), "market"),
+]
+
+NAVIGATION_URLS = {
+    "sales_copilot": "sales_copilot.html",
+    "leads": "leads.html",
+    "tools": "tools.html",
+    "prediction": "prediction.html",
+    "market": "market_intelligence.html",
+}
+
+
+def _normalize_page(page: str) -> str:
+    page = (page or "").strip().lower()
+    if page == "copilot":
+        return "sales_copilot"
+    if page == "campaigns":
+        return "tools"
+    return page
+
+
+def _pipeline_brief(db_context: Dict[str, Any]) -> str:
+    return (
+        f"Pipeline: {db_context['total_leads']} total leads, {db_context['hot_leads']} hot, "
+        f"{db_context['warm_leads']} warm, {db_context['cold_leads']} cold, "
+        f"average score {db_context['avg_score']}/100."
+    )
+
+
+def _page_suggestions(current_page: str, db_context: Dict[str, Any]) -> List[str]:
+    page = _normalize_page(current_page)
+    if page == "leads":
+        return [
+            f"You have {db_context['hot_leads']} hot leads. Want me to draft follow-up emails?",
+            "Ask: Which lead should I focus on?",
+            "Ask: Generate a closing strategy for the top lead.",
+        ]
+    if page == "tools":
+        return [
+            "Want me to create a campaign strategy for your product?",
+            "Ask: Write a cold email for SaaS founders.",
+            "Ask: Generate a sales pitch for my product.",
+        ]
+    if page == "prediction":
+        return [
+            "Ask: Explain the prediction in simple terms.",
+            "Ask: How can I improve campaign performance?",
+            "Ask: Show me risks in my current pipeline.",
+        ]
+    if page == "market":
+        return [
+            "Ask: Summarize market opportunities for my pipeline.",
+            "Ask: Which region should I prioritize next?",
+            "Ask: Compare demand and competition quickly.",
+        ]
+    return [
+        "Ask: Show my leads.",
+        "Ask: Help me close more deals.",
+        "Ask: Create a campaign for a SaaS product targeting startups.",
+    ]
+
+
+def _detect_navigation_intent(message: str) -> Optional[str]:
+    for pattern, page_key in NAVIGATION_PATTERNS:
+        if pattern.search(message):
+            return page_key
+    return None
+
+
+def _safe_product_from_message(message: str, default_value: str = "your product") -> str:
+    match = re.search(r"for\s+([a-z0-9 .&-]+?)(?:\s+targeting|\s+on|\s+using|$)", message, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return default_value
+
+
+def _safe_audience_from_message(message: str, default_value: str = "startup buyers") -> str:
+    match = re.search(r"targeting\s+([a-z0-9 .&-]+?)(?:\s+on|\s+with|$)", message, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return default_value
+
+
+def _tool_execution_from_message(message: str, current_page: str, db_context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    clean = message.strip()
+    low = clean.lower()
+
+    if re.search(r"\b(create|generate|build)\b.*\bcampaign\b", low):
+        product = _safe_product_from_message(clean, "SaaS product")
+        audience = _safe_audience_from_message(clean, "startup teams")
+        req = CampaignRequest(product=product, audience=audience, platform="LinkedIn", goal="Leads")
+        result = generate_campaign(req)
+        return {
+            "response": (
+                f"Campaign created for {product}. Theme: {result['theme']}. "
+                f"CTA: {result['cta']}. Expected outcome: {result['outcome']}"
+            ),
+            "action": "tool_result",
+            "tool": "generate_campaign",
+            "result": result,
+            "suggestions": _page_suggestions(current_page, db_context),
+        }
+
+    if re.search(r"\b(write|generate|draft)\b.*\b(email|cold email|outreach)\b", low):
+        product = _safe_product_from_message(clean, "SalesSparkAI")
+        target = _safe_audience_from_message(clean, "SaaS founders")
+        req = EmailRequest(recipient=target.title(), product=product, context=f"improving pipeline conversion for {target}")
+        result = generate_email(req)
+        return {
+            "response": f"Outreach email drafted for {target}. Subject: {result['subject']}",
+            "action": "tool_result",
+            "tool": "generate_email",
+            "result": result,
+            "suggestions": _page_suggestions(current_page, db_context),
+        }
+
+    if re.search(r"\b(generate|create|write)\b.*\bpitch\b", low):
+        product = _safe_product_from_message(clean, "SalesSparkAI")
+        target = _safe_audience_from_message(clean, "SaaS buyers")
+        req = PitchRequest(product=product, target=target)
+        result = generate_pitch(req)
+        return {
+            "response": f"Sales pitch generated for {product} targeting {target}.",
+            "action": "tool_result",
+            "tool": "generate_pitch",
+            "result": result,
+            "suggestions": _page_suggestions(current_page, db_context),
+        }
+
+    if re.search(r"\b(analy[sz]e|review|check)\b.*\bleads?\b", low):
+        top = db_context.get("top_leads", [])
+        top_line = ""
+        if top:
+            lead = top[0]
+            top_line = f" Top lead: {lead['company']} ({lead['score']}/100, {lead['category']})."
+        return {
+            "response": _pipeline_brief(db_context) + top_line,
+            "action": "tool_result",
+            "tool": "analyze_leads",
+            "result": {
+                "pipeline": db_context,
+                "top_lead": top[0] if top else None,
+            },
+            "suggestions": _page_suggestions(current_page, db_context),
+        }
+
+    return None
+
+
+def _lead_intelligence_from_message(message: str, current_page: str, db_context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    low = message.lower()
+    top = db_context.get("top_leads", [])
+    top_lead = top[0] if top else None
+
+    if re.search(r"\b(which|what)\b.*\blead\b.*\b(focus|prioriti[sz]e|target)\b", low):
+        if not top_lead:
+            return {
+                "response": "No leads are available yet. Add leads first and I can prioritize the best opportunity.",
+                "suggestions": _page_suggestions(current_page, db_context),
+            }
+        return {
+            "response": (
+                f"Your highest priority lead is {top_lead['company']} with a score of {top_lead['score']}. "
+                "I recommend scheduling a product demo and leading with ROI benefits."
+            ),
+            "suggestions": _page_suggestions(current_page, db_context),
+        }
+
+    if "help me close more deals" in low or "close more deals" in low:
+        actions = []
+        if top_lead:
+            actions.append(f"1. Prioritize {top_lead['company']} ({top_lead['score']}/100) for immediate contact.")
+        actions.append("2. Generate personalized outreach for top hot and warm leads.")
+        actions.append("3. Schedule day 1 / day 3 / day 7 follow-up sequence for warm leads.")
+        actions.append("4. Use deal closure assistant to refine objection handling and next steps.")
+        return {
+            "response": "Here is a deal-closing workflow based on your current pipeline:\n" + "\n".join(actions),
+            "action": "multi_step",
+            "steps": actions,
+            "suggestions": _page_suggestions(current_page, db_context),
+        }
+
+    if re.search(r"\b(how many|pipeline|hot leads|warm leads|cold leads|average score)\b", low):
+        return {
+            "response": _pipeline_brief(db_context),
+            "suggestions": _page_suggestions(current_page, db_context),
+        }
+
+    return None
+
+
+def _page_guidance_from_message(message: str, current_page: str) -> Optional[str]:
+    if not re.search(r"\b(how do i|how to|guide me|what can i do here)\b", message.lower()):
+        return None
+
+    page = _normalize_page(current_page)
+    if page == "tools":
+        return "You are on the Tools page. Enter product and audience details, then run campaign, pitch, email, or social generators from each card."
+    if page == "leads":
+        return "You are on the Leads page. Review lead scores, then use Deal Closure Assistant and Follow-up Planner for prioritized actions."
+    if page == "prediction":
+        return "You are on the Prediction page. Choose platform and goal, run prediction, then use the reasoning and suggestions to improve campaign setup."
+    if page == "market":
+        return "You are on the Market Intelligence page. Select industry, region, and horizon, then analyze demand, competition, and opportunity outputs."
+    if page == "sales_copilot":
+        return "You are on the Sales Copilot page. Track KPI cards, inspect momentum and alerts, and use Next Best Actions to prioritize outreach."
+    return None
 @app.post("/chat")
 def chat_assistant(req: ChatRequest):
     user_message = (req.message or "").strip()
@@ -1170,18 +1383,69 @@ def chat_assistant(req: ChatRequest):
         return {"error": "Message must not be empty."}
 
     db_context = get_pipeline_snapshot()
+    current_page = req.current_page or "unknown"
+
+    nav_page = _detect_navigation_intent(user_message)
+    if nav_page:
+        return {
+            "response": f"Opening the {nav_page.replace('_', ' ').title()} page.",
+            "action": "navigate",
+            "page": nav_page,
+            "url": NAVIGATION_URLS[nav_page],
+            "suggestions": _page_suggestions(current_page, db_context),
+        }
+
+    tool_result = _tool_execution_from_message(user_message, current_page, db_context)
+    if tool_result:
+        return tool_result
+
+    lead_intel = _lead_intelligence_from_message(user_message, current_page, db_context)
+    if lead_intel:
+        return lead_intel
+
+    page_guidance = _page_guidance_from_message(user_message, current_page)
+    if page_guidance:
+        return {
+            "response": page_guidance,
+            "suggestions": _page_suggestions(current_page, db_context),
+        }
+
     try:
-        return generate_chat_response(
+        ai_result = generate_chat_response(
             message=user_message,
             db_context=db_context,
-            current_page=req.current_page or "unknown",
+            current_page=current_page,
             history=req.history or [],
         )
+
+        if ai_result.get("action") == "navigate":
+            page = (ai_result.get("page") or "").lower()
+            mapping = {
+                "copilot": "sales_copilot",
+                "campaigns": "tools",
+                "market": "market",
+                "prediction": "prediction",
+                "leads": "leads",
+                "tools": "tools",
+            }
+            normalized_page = mapping.get(page, page)
+            if normalized_page in NAVIGATION_URLS:
+                ai_result["page"] = normalized_page
+                ai_result["url"] = NAVIGATION_URLS[normalized_page]
+
+        if "suggestions" not in ai_result:
+            ai_result["suggestions"] = _page_suggestions(current_page, db_context)
+
+        return ai_result
+
     except ValueError as exc:
         return {"error": str(exc)}
     except Exception as exc:
         logger.error("[CHAT] Groq error (%s): %s", type(exc).__name__, exc)
-        return {"error": f"AI service temporarily unavailable ({type(exc).__name__}). Check server logs."}
+        return {
+            "response": "I'm here to help with SalesSparkAI features like lead analysis, campaign generation, and sales strategy.",
+            "suggestions": _page_suggestions(current_page, db_context),
+        }
 
 
 @app.get("/chat/test")
@@ -1259,6 +1523,9 @@ def copilot_insights():
         fallback,
     )
     return ai_data
+
+
+
 
 
 
