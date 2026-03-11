@@ -4,50 +4,725 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sales Copilot - SalesSpark AI</title>
+    <title>Sales Copilot | SalesSpark AI</title>
+    <meta name="description"
+        content="SalesSparkAI Copilot — your AI-powered sales intelligence control center for pipeline analytics, lead insights, and campaign generation.">
     <link rel="icon" type="image/png" href="./assets/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
+    <style>
+        /* ── Copilot Dashboard overrides ───────────────────────────────────── */
+        body {
+            font-family: 'Inter', 'Segoe UI', sans-serif;
+        }
+
+        .copilot-wrapper {
+            max-width: 1380px;
+            margin: 0 auto;
+            padding: 90px 32px 80px;
+        }
+
+        /* ── Page Header ────────────────────────────────────────────────────── */
+        .copilot-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 36px;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+
+        .copilot-header-text h1 {
+            font-size: 2rem;
+            font-weight: 800;
+            background: linear-gradient(90deg, #a78bfa, #8b5cf6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 6px;
+        }
+
+        .copilot-header-text p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            max-width: 520px;
+            line-height: 1.6;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .btn-outline {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.03);
+            color: #cbd5e1;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .btn-outline:hover {
+            background: rgba(139, 92, 246, 0.12);
+            border-color: var(--primary);
+            color: white;
+            transform: translateY(-1px);
+        }
+
+        .btn-solid {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 18px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+            color: white;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s;
+            box-shadow: 0 4px 14px rgba(139, 92, 246, 0.35);
+        }
+
+        .btn-solid:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(139, 92, 246, 0.5);
+        }
+
+        /* ── Pipeline KPI Cards ─────────────────────────────────────────────── */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        @media (max-width: 1100px) {
+            .kpi-grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        @media (max-width: 680px) {
+            .kpi-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        .kpi-card {
+            background: linear-gradient(145deg, #1e293b, #0f172a);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 16px;
+            padding: 22px 20px;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.25s, border-color 0.25s, box-shadow 0.25s;
+        }
+
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            border-radius: 16px 16px 0 0;
+            background: var(--kpi-accent, var(--primary));
+            opacity: 0.7;
+        }
+
+        .kpi-card:hover {
+            transform: translateY(-3px);
+            border-color: rgba(139, 92, 246, 0.25);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .kpi-icon {
+            font-size: 20px;
+            margin-bottom: 12px;
+            display: block;
+        }
+
+        .kpi-value {
+            font-size: 2.2rem;
+            font-weight: 800;
+            line-height: 1;
+            margin-bottom: 6px;
+            background: linear-gradient(135deg, #fff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .kpi-label {
+            font-size: 12px;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            color: var(--text-muted);
+        }
+
+        .kpi-badge {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            font-size: 11px;
+            font-weight: 600;
+            padding: 3px 9px;
+            border-radius: 20px;
+            background: var(--kpi-badge-bg, rgba(139, 92, 246, 0.15));
+            color: var(--kpi-accent, #a78bfa);
+        }
+
+        /* ── Main insights row ───────────────────────────────────────────────── */
+        .copilot-main {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        /* ── Section card base ──────────────────────────────────────────────── */
+        .dash-card {
+            background: linear-gradient(145deg, #1e293b, #0f172a);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 20px;
+            overflow: hidden;
+        }
+
+        .dash-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 24px 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .dash-card-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: #f1f5f9;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .dash-card-badge {
+            font-size: 11px;
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-weight: 600;
+        }
+
+        /* ── AI Insights panel ──────────────────────────────────────────────── */
+        .insights-list {
+            padding: 16px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .insight-item {
+            display: flex;
+            gap: 12px;
+            align-items: flex-start;
+            padding: 12px 14px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: background 0.2s;
+        }
+
+        .insight-item:hover {
+            background: rgba(139, 92, 246, 0.06);
+        }
+
+        .insight-icon {
+            font-size: 18px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+
+        .insight-text {
+            font-size: 13px;
+            line-height: 1.55;
+            color: #cbd5e1;
+        }
+
+        .insight-text strong {
+            color: #f1f5f9;
+            font-weight: 600;
+        }
+
+        /* ── Next Actions list ──────────────────────────────────────────────── */
+        .actions-list {
+            padding: 16px 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .action-row {
+            display: flex;
+            align-items: center;
+            gap: 14px;
+            padding: 13px 14px;
+            border-radius: 12px;
+            border-left: 3px solid var(--action-color, var(--primary));
+            background: rgba(255, 255, 255, 0.02);
+            transition: background 0.2s;
+            position: relative;
+        }
+
+        .action-row:hover {
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .action-rank {
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            background: var(--action-color, var(--primary));
+            color: white;
+            font-size: 12px;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .action-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .action-lead {
+            font-size: 12px;
+            font-weight: 700;
+            color: #94a3b8;
+            margin-bottom: 3px;
+        }
+
+        .action-text {
+            font-size: 13.5px;
+            font-weight: 500;
+            color: #e2e8f0;
+        }
+
+        .action-reason {
+            font-size: 12px;
+            color: var(--text-muted);
+            font-style: italic;
+            margin-top: 2px;
+        }
+
+        .category-badge {
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 8px;
+            letter-spacing: 0.04em;
+        }
+
+        /* ── Momentum + Alerts ──────────────────────────────────────────────── */
+        .momentum-body {
+            padding: 16px 20px 20px;
+        }
+
+        .momentum-value {
+            font-size: 2rem;
+            font-weight: 800;
+            margin: 8px 0 4px;
+        }
+
+        .momentum-reason {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+            font-style: italic;
+        }
+
+        .flag-block {
+            padding: 12px 14px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+        }
+
+        .flag-block.risk {
+            background: rgba(248, 113, 113, 0.08);
+            border-left: 3px solid #f87171;
+        }
+
+        .flag-block.opportunity {
+            background: rgba(34, 197, 94, 0.08);
+            border-left: 3px solid #22c55e;
+        }
+
+        .flag-block.clear {
+            background: rgba(34, 197, 94, 0.06);
+            border: 1px solid rgba(34, 197, 94, 0.2);
+            text-align: center;
+        }
+
+        .flag-block ul {
+            margin: 8px 0 0 16px;
+            font-size: 13px;
+            line-height: 2;
+        }
+
+        .alert-item {
+            padding: 13px 16px;
+            border-radius: 12px;
+            margin-bottom: 10px;
+        }
+
+        /* ── Quick Actions grid ─────────────────────────────────────────────── */
+        .qa-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 16px;
+            padding: 20px;
+        }
+
+        .qa-card {
+            display: block;
+            padding: 20px 18px;
+            border-radius: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.07);
+            background: rgba(255, 255, 255, 0.02);
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.25s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .qa-card::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at 70% 30%, var(--qa-glow, rgba(139, 92, 246, 0.1)), transparent 70%);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .qa-card:hover {
+            border-color: var(--qa-accent, var(--primary));
+            transform: translateY(-3px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+        }
+
+        .qa-card:hover::after {
+            opacity: 1;
+        }
+
+        .qa-icon {
+            font-size: 28px;
+            margin-bottom: 12px;
+            display: block;
+        }
+
+        .qa-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: #f1f5f9;
+            margin-bottom: 5px;
+        }
+
+        .qa-desc {
+            font-size: 12px;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .qa-arrow {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            font-size: 16px;
+            color: var(--text-muted);
+            transition: transform 0.2s, color 0.2s;
+        }
+
+        .qa-card:hover .qa-arrow {
+            transform: translate(2px, -2px);
+            color: var(--qa-accent, var(--primary));
+        }
+
+        /* ── Bottom two-col ─────────────────────────────────────────────────── */
+        .bottom-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        @media (max-width: 820px) {
+            .bottom-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* ── Responsive full-width ──────────────────────────────────────────── */
+        .full-row {
+            margin-bottom: 24px;
+        }
+
+        /* ── Live data badge ─────────────────────────────────────────────────── */
+        .live-dot {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #22c55e;
+            box-shadow: 0 0 6px #22c55e;
+            animation: livePulse 2s infinite;
+            margin-right: 5px;
+        }
+
+        @keyframes livePulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.3;
+            }
+        }
+
+        .section-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+            font-weight: 600;
+        }
+    </style>
 </head>
 
 <body>
+    <!-- ── Navigation ─────────────────────────────────────────────────────── -->
     <nav class="navbar">
-        <a href="index.html">Home</a>
-        <a href="tools.html">Tools</a>
-        <a href="prediction.html">Prediction</a>
-        <a href="market_intelligence.html">Market Intelligence</a>
-        <a href="sales_copilot.html">Sales Copilot</a>
-        <a href="leads.html">Leads</a>
+        <a href="index.html" class="navbar-brand">
+            <img src="assets/favicon.png" alt="SalesSpark AI Logo">
+            <span class="brand-text">SalesSpark AI</span>
+        </a>
+        <div class="nav-links">
+            <a href="index.html">Home</a>
+            <a href="tools.html">Tools</a>
+            <a href="prediction.html">Prediction</a>
+            <a href="market_intelligence.html">Market Intel</a>
+            <a href="sales_copilot.html" class="active">Sales Copilot</a>
+            <a href="leads.html">Leads</a>
+        </div>
     </nav>
 
-    <section class="container" style="padding: 20px;">
-        <h1 class="page-title">🚀 Sales Action Copilot</h1>
-        <p class="page-subtitle">Real-time guidance on what to do next</p>
-    </section>
+    <div class="copilot-wrapper">
 
-    <section class="container" style="padding: 40px 20px;">
-
-        <!-- Next Best Actions -->
-        <div>
-            <h3 style="margin-bottom: 20px;">📌 Next Best Actions</h3>
-            <div id="next-actions-container"></div>
-        </div>
-
-        <!-- Sales Momentum -->
-        <div style="margin-top: 40px;">
-            <div class="card">
-                <h3>📈 Sales Momentum Intelligence</h3>
-                <div id="trend-badge" style="font-size: 24px; font-weight: 700; margin: 15px 0;"></div>
-                <div id="trend-direction" style="margin-bottom: 15px; color: var(--text-muted);"></div>
-
-                <div id="risk-container" style="margin-top: 15px;"></div>
-                <div id="opportunity-container" style="margin-top: 15px;"></div>
+        <!-- ── Page Header ───────────────────────────────────────────────── -->
+        <div class="copilot-header">
+            <div class="copilot-header-text">
+                <h1>🚀 Sales Copilot</h1>
+                <p>Your AI assistant for analyzing leads, generating campaigns, and improving sales performance. Ask
+                    anything or explore real-time pipeline insights below.</p>
+            </div>
+            <div class="header-actions">
+                <button class="btn-outline" onclick="refreshDashboard()" id="refreshBtn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.5">
+                        <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                        <path d="M3 3v5h5" />
+                    </svg>
+                    Refresh
+                </button>
+                <a href="leads.html" class="btn-solid">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                        stroke-width="2.5">
+                        <circle cx="12" cy="8" r="4" />
+                        <path d="M20 21a8 8 0 1 0-16 0" />
+                    </svg>
+                    Open Leads
+                </a>
             </div>
         </div>
 
-        <!-- Real-Time Alerts -->
-        <div id="alerts-container" style="margin-top: 40px; display: none;"></div>
+        <!-- ── Pipeline KPI Cards ────────────────────────────────────────── -->
+        <div class="kpi-grid" id="kpi-grid">
+            <div class="kpi-card" style="--kpi-accent:#8b5cf6; --kpi-badge-bg:rgba(139,92,246,0.15);">
+                <span class="kpi-icon">📊</span>
+                <div class="kpi-value" id="kpi-total">–</div>
+                <div class="kpi-label">Total Leads</div>
+                <div class="kpi-badge" id="kpi-health">–</div>
+            </div>
+            <div class="kpi-card" style="--kpi-accent:#f87171; --kpi-badge-bg:rgba(248,113,113,0.12);">
+                <span class="kpi-icon">🔥</span>
+                <div class="kpi-value" id="kpi-hot"
+                    style="background:linear-gradient(135deg,#fca5a5,#f87171);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">
+                    –</div>
+                <div class="kpi-label">Hot Leads</div>
+                <div class="kpi-badge" style="color:#f87171;background:rgba(248,113,113,0.12);">Score ≥ 80</div>
+            </div>
+            <div class="kpi-card" style="--kpi-accent:#f59e0b; --kpi-badge-bg:rgba(245,158,11,0.12);">
+                <span class="kpi-icon">🌡️</span>
+                <div class="kpi-value" id="kpi-warm"
+                    style="background:linear-gradient(135deg,#fcd34d,#f59e0b);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">
+                    –</div>
+                <div class="kpi-label">Warm Leads</div>
+                <div class="kpi-badge" style="color:#f59e0b;background:rgba(245,158,11,0.12);">Score 55–79</div>
+            </div>
+            <div class="kpi-card" style="--kpi-accent:#94a3b8; --kpi-badge-bg:rgba(148,163,184,0.10);">
+                <span class="kpi-icon">❄️</span>
+                <div class="kpi-value" id="kpi-cold"
+                    style="background:linear-gradient(135deg,#cbd5e1,#94a3b8);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">
+                    –</div>
+                <div class="kpi-label">Cold Leads</div>
+                <div class="kpi-badge" style="color:#94a3b8;background:rgba(148,163,184,0.10);">Score &lt; 55</div>
+            </div>
+            <div class="kpi-card" style="--kpi-accent:#34d399; --kpi-badge-bg:rgba(52,211,153,0.10);">
+                <span class="kpi-icon">⚡</span>
+                <div class="kpi-value" id="kpi-avg"
+                    style="background:linear-gradient(135deg,#6ee7b7,#34d399);-webkit-background-clip:text;-webkit-text-fill-color:transparent;">
+                    –</div>
+                <div class="kpi-label">Avg Lead Score</div>
+                <div class="kpi-badge" style="color:#34d399;background:rgba(52,211,153,0.10);">/ 100</div>
+            </div>
+        </div>
 
-    </section>
+        <!-- ── AI Insights ────────────────────────────────────────────────── -->
+        <div class="copilot-main">
+
+            <!-- AI Insights panel -->
+            <div class="dash-card" style="display:flex;flex-direction:column;">
+                <div class="dash-card-header">
+                    <div class="dash-card-title">✨ AI Insights &amp; Recommendations</div>
+                    <span class="dash-card-badge" style="background:rgba(52,211,153,0.12);color:#34d399;">Live</span>
+                </div>
+                <div class="insights-list" id="insights-panel">
+                    <!-- Filled by copilot_page.js -->
+                    <div class="insight-item">
+                        <span class="insight-icon">⏳</span>
+                        <span class="insight-text">Loading AI insights…</span>
+                    </div>
+                </div>
+
+                <!-- Pipeline Momentum -->
+                <div style="padding:0 20px 20px; margin-top:auto;">
+                    <div style="margin-bottom: 8px;">
+                        <span class="section-label">📈 Sales Momentum</span>
+                    </div>
+                    <div id="trend-badge" class="momentum-value">–</div>
+                    <div id="trend-direction" class="momentum-reason"></div>
+                    <div id="risk-container"></div>
+                    <div id="opportunity-container" style="margin-top:8px;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Next Best Actions ─────────────────────────────────────────── -->
+        <div class="full-row">
+            <div class="dash-card">
+                <div class="dash-card-header">
+                    <div class="dash-card-title">📌 Next Best Actions</div>
+                    <span class="section-label">AI-prioritised by score &amp; intent</span>
+                </div>
+                <div class="actions-list" id="next-actions-container">
+                    <div style="padding:24px;text-align:center;color:var(--text-muted);">Loading actions…</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Bottom row: Momentum details + Active Alerts ──────────────── -->
+        <div id="alerts-container" class="full-row" style="display:none;">
+            <div class="dash-card">
+                <div class="dash-card-header">
+                    <div class="dash-card-title" style="color:#f87171;">⚠️ Active Alerts</div>
+                </div>
+                <div style="padding:16px 20px;" id="alerts-inner"></div>
+            </div>
+        </div>
+
+        <!-- ── Quick Actions grid ────────────────────────────────────────── -->
+        <div class="full-row">
+            <div class="dash-card">
+                <div class="dash-card-header">
+                    <div class="dash-card-title">⚡ Quick Actions</div>
+                    <span class="section-label">Jump to any platform tool</span>
+                </div>
+                <div class="qa-grid">
+                    <a href="leads.html" class="qa-card" style="--qa-accent:#f87171;--qa-glow:rgba(248,113,113,0.08);">
+                        <span class="qa-icon">👥</span>
+                        <div class="qa-title">Leads Manager</div>
+                        <div class="qa-desc">View, filter, and manage all scored leads.</div>
+                        <span class="qa-arrow">↗</span>
+                    </a>
+                    <a href="tools.html#campaigns" class="qa-card"
+                        style="--qa-accent:#8b5cf6;--qa-glow:rgba(139,92,246,0.08);">
+                        <span class="qa-icon">🚀</span>
+                        <div class="qa-title">Campaign Generator</div>
+                        <div class="qa-desc">Build multi-channel marketing strategies instantly.</div>
+                        <span class="qa-arrow">↗</span>
+                    </a>
+                    <a href="tools.html#sales" class="qa-card"
+                        style="--qa-accent:#f59e0b;--qa-glow:rgba(245,158,11,0.08);">
+                        <span class="qa-icon">🎯</span>
+                        <div class="qa-title">Pitch Generator</div>
+                        <div class="qa-desc">Craft persuasive scripts that close deals faster.</div>
+                        <span class="qa-arrow">↗</span>
+                    </a>
+                    <a href="tools.html" class="qa-card" style="--qa-accent:#38bdf8;--qa-glow:rgba(56,189,248,0.08);">
+                        <span class="qa-icon">📧</span>
+                        <div class="qa-title">Email Generator</div>
+                        <div class="qa-desc">Generate personalized outreach emails at scale.</div>
+                        <span class="qa-arrow">↗</span>
+                    </a>
+                    <a href="market_intelligence.html" class="qa-card"
+                        style="--qa-accent:#34d399;--qa-glow:rgba(52,211,153,0.08);">
+                        <span class="qa-icon">📊</span>
+                        <div class="qa-title">Market Intelligence</div>
+                        <div class="qa-desc">Analyze demand, competition, and opportunities.</div>
+                        <span class="qa-arrow">↗</span>
+                    </a>
+                    <a href="leads.html#deal-tools" class="qa-card"
+                        style="--qa-accent:#a78bfa;--qa-glow:rgba(167,139,250,0.08);">
+                        <span class="qa-icon">🔒</span>
+                        <div class="qa-title">Deal Tools</div>
+                        <div class="qa-desc">Closure strategies and follow-up plans for hot leads.</div>
+                        <span class="qa-arrow">↗</span>
+                    </a>
+                    <a href="prediction.html" class="qa-card"
+                        style="--qa-accent:#fb923c;--qa-glow:rgba(251,146,60,0.08);">
+                        <span class="qa-icon">🔮</span>
+                        <div class="qa-title">Prediction Tool</div>
+                        <div class="qa-desc">Estimate campaign engagement and conversion rates.</div>
+                        <span class="qa-arrow">↗</span>
+                    </a>
+                    <a href="tools.html" class="qa-card" style="--qa-accent:#e879f9;--qa-glow:rgba(232,121,249,0.08);">
+                        <span class="qa-icon">📱</span>
+                        <div class="qa-title">Social Media Gen</div>
+                        <div class="qa-desc">Create posts, hashtags, and social content in seconds.</div>
+                        <span class="qa-arrow">↗</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+
+    </div><!-- /copilot-wrapper -->
 
     <footer>
         <p>© 2026 SalesSpark AI | Enterprise Intelligence Engine</p>

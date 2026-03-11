@@ -50,13 +50,58 @@ header h1 {
 }
 
 /* --- Navigation --- */
+/* --- Navigation --- */
 .navbar {
     display: flex;
-    justify-content: space-evenly;
+    justify-content: space-between;
+    /* Space between brand and links */
     align-items: center;
-    padding: 16px 0;
+    padding: 16px 40px;
+    /* More horizontal padding */
     background: #020617;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    /* Keep dark background */
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+    backdrop-filter: blur(10px);
+    /* Slight glass effect */
+    background: rgba(2, 6, 23, 0.95);
+}
+
+.navbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-decoration: none;
+    color: white;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: -0.02em;
+    transition: opacity 0.2s;
+}
+
+.navbar-brand:hover {
+    opacity: 0.9;
+}
+
+.navbar-brand img {
+    width: 26px;
+    height: 26px;
+    filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.4));
+    /* Glow effect */
+}
+
+.brand-text {
+    background: linear-gradient(90deg, #fff, #e2e8f0);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.nav-links {
+    display: flex;
+    gap: 30px;
+    align-items: center;
 }
 
 .page-title {
