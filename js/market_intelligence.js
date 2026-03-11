@@ -1,6 +1,5 @@
 const API_BASE = "http://127.0.0.1:8000";
 
-// Chart Instances
 let demandChart = null;
 let matrixChart = null;
 let channelChart = null;
@@ -10,8 +9,6 @@ async function analyzeMarketTrends() {
     const region = document.getElementById('mi_region').value;
     const horizon = document.getElementById('mi_horizon').value;
     const btn = document.querySelector('button');
-
-    // UI Loading State
     const originalText = btn.innerText;
     btn.innerText = "Analyzing...";
     btn.disabled = true;
@@ -23,33 +20,41 @@ async function analyzeMarketTrends() {
             body: JSON.stringify({ industry, region, time_horizon: horizon })
         });
 
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+
         const data = await res.json();
+        if (!Array.isArray(data.demand_trend) || !data.market_matrix || !data.channels) {
+            throw new Error('Invalid market response shape');
+        }
 
-        // Update UI
         renderCharts(data);
-        updateInsight(data.insight);
-
+        updateInsight(data);
     } catch (e) {
         console.error("Analysis Failed", e);
-        alert("Failed to analyze market. Ensure backend is running.");
+        alert("Market analysis failed. Please retry after backend restart.");
     } finally {
         btn.innerText = originalText;
         btn.disabled = false;
     }
 }
 
-function updateInsight(text) {
+function updateInsight(data) {
     const box = document.getElementById('mi_insight_box');
     const p = document.getElementById('mi_insight_text');
     box.style.display = 'block';
-    p.innerText = text;
+    p.innerHTML = `
+        <strong>Trend:</strong> ${data.market_trend_summary || 'N/A'}<br><br>
+        <strong>Demand Level:</strong> ${data.demand_level || 'N/A'}<br><br>
+        <strong>Competition:</strong> ${data.competition_overview || 'N/A'}<br><br>
+        <strong>Opportunity:</strong> ${data.opportunity_insights || 'N/A'}
+    `;
 }
 
 function renderCharts(data) {
-    // 1. Demand Trend Chart (Line)
     const demandCtx = document.getElementById('chartDemand').getContext('2d');
     if (demandChart) demandChart.destroy();
-
     demandChart = new Chart(demandCtx, {
         type: 'line',
         data: {
@@ -70,16 +75,12 @@ function renderCharts(data) {
                 y: { beginAtZero: true, max: 120, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#94a3b8' } },
                 x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
             },
-            plugins: {
-                legend: { labels: { color: '#f8fafc' } }
-            }
+            plugins: { legend: { labels: { color: '#f8fafc' } } }
         }
     });
 
-    // 2. Market Matrix (Bar/Radar) - Using Bar for clarity comparison
     const matrixCtx = document.getElementById('chartMatrix').getContext('2d');
     if (matrixChart) matrixChart.destroy();
-
     matrixChart = new Chart(matrixCtx, {
         type: 'bar',
         data: {
@@ -98,37 +99,30 @@ function renderCharts(data) {
                 y: { beginAtZero: true, max: 100, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#94a3b8' } },
                 x: { grid: { display: false }, ticks: { color: '#f8fafc', font: { weight: 'bold' } } }
             },
-            plugins: {
-                legend: { display: false }
-            }
+            plugins: { legend: { display: false } }
         }
     });
 
-    // 3. Channel Effectiveness (Doughnut)
     const channelCtx = document.getElementById('chartChannels').getContext('2d');
     if (channelChart) channelChart.destroy();
-
     channelChart = new Chart(channelCtx, {
         type: 'doughnut',
         data: {
             labels: Object.keys(data.channels),
             datasets: [{
                 data: Object.values(data.channels),
-                backgroundColor: ['#0a66c2', '#e1306c', '#facc15'], // LinkedIn Blue, Insta Pink, Email Yellow
+                backgroundColor: ['#0a66c2', '#e1306c', '#facc15'],
                 borderWidth: 0
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: {
-                legend: { position: 'right', labels: { color: '#f8fafc' } }
-            }
+            plugins: { legend: { position: 'right', labels: { color: '#f8fafc' } } }
         }
     });
 }
 
-// Auto-run on load with default
 document.addEventListener('DOMContentLoaded', () => {
     analyzeMarketTrends();
 });

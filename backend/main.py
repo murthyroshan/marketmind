@@ -1,28 +1,44 @@
-from fastapi import FastAPI
+from datetime import datetime, timedelta
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import sqlite3
-from datetime import datetime
-import random
-import os
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+import hashlib
+import json
 import logging
+import os
+import random
+import sqlite3
+from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
 from dotenv import load_dotenv
 
-# Load environment variables from .env (GROQ_API_KEY, etc.)
 load_dotenv()
 
-# Configure logging so [CHAT] / [ai_service] lines are visible in the terminal
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    format="%(asctime)s %(levelname)-8s %(message)s",
     datefmt="%H:%M:%S",
 )
-logger = logging.getLogger("saleskpark")
+logger = logging.getLogger("salespark")
 
-# Initialize FastAPI
+try:
+    from backend.ai_service import generate_chat_response
+except ImportError:
+    from ai_service import generate_chat_response
+
+try:
+    from backend.phase2_ai import generate_json
+except ImportError:
+    from phase2_ai import generate_json
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+DB_PATH = os.path.join(PROJECT_ROOT, "backend", "sales.db")
+
 app = FastAPI()
-
-# CORS Configuration
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -31,308 +47,354 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Database connection helper
-def get_db():
-    return sqlite3.connect("backend/sales.db")
+app.mount("/css", StaticFiles(directory=os.path.join(PROJECT_ROOT, "css")), name="css")
+app.mount("/js", StaticFiles(directory=os.path.join(PROJECT_ROOT, "js")), name="js")
+app.mount("/assets", StaticFiles(directory=os.path.join(PROJECT_ROOT, "assets")), name="assets")
 
-# Initialize Database Tables
-def init_db():
-    conn = get_db()
-    cur = conn.cursor()
-    
-    # Create campaigns table
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS campaigns (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        product TEXT,
-        platform TEXT,
-        goal TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-    
-    # Create leads table
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS leads (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        company TEXT,
-        budget INTEGER,
-        interest INTEGER,
-        score INTEGER,
-        category TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )
-    """)
-    
-    # Seed Data if empty
-    cur.execute("SELECT COUNT(*) FROM leads")
-    count = cur.fetchone()[0]
-    
-    if count == 0:
-        print("[INFO] Seeding realistic demo data...")
-        companies = ["TechCorp", "Innovate Ltd", "BlueSky Inc", "Quantum Systems", "Nexus AI", 
-                     "Alpha Solutions", "CyberDyan", "Global Tech", "FutureSoft", "DataFlow",
-                     "SmartComm", "EcoEnergy", "FinTech Pro", "MediCare Plus", "EduLearning"]
-        
-        for i, company in enumerate(companies):
-            # 2 Hot, 5 Warm, 8 Cold
-            if i < 2:
-                score = random.randint(80, 95)
-                category = "Hot"
-                interest = random.randint(8, 10)
-                budget = random.randint(50000, 100000)
-            elif i < 7:
-                score = random.randint(50, 79)
-                category = "Warm"
-                interest = random.randint(5, 8)
-                budget = random.randint(10000, 40000)
-            else:
-                score = random.randint(15, 49)
-                category = "Cold"
-                interest = random.randint(1, 5)
-                budget = random.randint(1000, 9000)
-                
-            cur.execute(
-                "INSERT INTO leads (company, budget, interest, score, category, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (company, budget, interest, score, category, datetime.now().isoformat())
-            )
-        print("[INFO] Seeded 15 leads.")
-
-    conn.commit()
-    conn.close()
-    print("[INFO] Database initialized (tables created if missing)")
-
-# Initialize DB on startup
-init_db()
-
-# ==================== PYDANTIC MODELS ====================
 class CampaignRequest(BaseModel):
     product: str
     platform: str
     goal: str
+    audience: Optional[str] = ""
+
 
 class PitchRequest(BaseModel):
     product: str
     target: str
 
+
 class ScoreRequest(BaseModel):
     company: str
     budget: int
-    interest: int
+    interest: int = Field(ge=1, le=10)
+    industry: Optional[str] = None
+    region: Optional[str] = None
+    contact_name: Optional[str] = None
+    contact_email: Optional[str] = None
+    deal_stage: Optional[str] = "Prospecting"
+    notes: Optional[str] = None
+
 
 class AnalysisRequest(BaseModel):
     industry: str
+    product: Optional[str] = ""
+
 
 class EmailRequest(BaseModel):
     recipient: str
     context: str
     product: str
 
+
 class ContentRequest(BaseModel):
     product: str
     platform: str
 
-class WhatsAppRequest(BaseModel):
-    recipient: str
-    offer: str
 
 class PredictionRequest(BaseModel):
     platform: str
     goal: str
 
+
 class DealAssistRequest(BaseModel):
     lead_id: int
+
 
 class FollowupRequest(BaseModel):
     lead_id: int
 
+
 class ChatRequest(BaseModel):
     message: str
     session_id: str = "default_session"
-    current_page: str = "unknown"           # page the user is on (sent by frontend)
-    history: list = []                       # last N [{role, content}] turns
+    current_page: str = "unknown"
+    history: list = []
 
-# ==================== PHASE 1: CORE GENERATORS ====================
 
-# 1. Campaign Generator
-@app.post("/campaigns")
-def generate_campaign(req: CampaignRequest):
+class MarketAnalysisRequest(BaseModel):
+    industry: str
+    region: str = "Global"
+    time_horizon: str = "Mid"
+
+
+def get_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def ensure_column(cur: sqlite3.Cursor, table: str, column: str, definition: str) -> None:
+    columns = {row[1] for row in cur.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in columns:
+        cur.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def init_db() -> None:
     conn = get_db()
     cur = conn.cursor()
+
     cur.execute(
-        "INSERT INTO campaigns (product, platform, goal, created_at) VALUES (?, ?, ?, ?)",
-        (req.product, req.platform, req.goal, datetime.now().isoformat())
+        """
+        CREATE TABLE IF NOT EXISTS campaigns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            product TEXT,
+            audience TEXT,
+            platform TEXT,
+            goal TEXT,
+            objective TEXT,
+            theme TEXT,
+            marketing_strategy TEXT,
+            messaging_approach TEXT,
+            cta TEXT,
+            expected_outcome TEXT,
+            outcome TEXT,
+            ai_insight TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
     )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS leads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company TEXT,
+            budget INTEGER,
+            interest INTEGER,
+            score INTEGER,
+            category TEXT,
+            industry TEXT,
+            region TEXT,
+            contact_name TEXT,
+            contact_email TEXT,
+            deal_stage TEXT DEFAULT 'Prospecting',
+            last_contacted TIMESTAMP,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS interactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lead_id INTEGER REFERENCES leads(id),
+            action_type TEXT,
+            content TEXT,
+            scheduled_for TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS ai_outputs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            feature TEXT NOT NULL,
+            input_hash TEXT NOT NULL,
+            output TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(feature, input_hash)
+        )
+        """
+    )
+
+    ensure_column(cur, "campaigns", "audience", "TEXT")
+    ensure_column(cur, "campaigns", "objective", "TEXT")
+    ensure_column(cur, "campaigns", "theme", "TEXT")
+    ensure_column(cur, "campaigns", "marketing_strategy", "TEXT")
+    ensure_column(cur, "campaigns", "messaging_approach", "TEXT")
+    ensure_column(cur, "campaigns", "cta", "TEXT")
+    ensure_column(cur, "campaigns", "expected_outcome", "TEXT")
+    ensure_column(cur, "campaigns", "outcome", "TEXT")
+    ensure_column(cur, "campaigns", "ai_insight", "TEXT")
+
+    ensure_column(cur, "leads", "industry", "TEXT")
+    ensure_column(cur, "leads", "region", "TEXT")
+    ensure_column(cur, "leads", "contact_name", "TEXT")
+    ensure_column(cur, "leads", "contact_email", "TEXT")
+    ensure_column(cur, "leads", "deal_stage", "TEXT DEFAULT 'Prospecting'")
+    ensure_column(cur, "leads", "last_contacted", "TIMESTAMP")
+    ensure_column(cur, "leads", "notes", "TEXT")
+
+    # Backward-compatible interactions schema migration
+    ensure_column(cur, "interactions", "content", "TEXT")
+    ensure_column(cur, "interactions", "scheduled_for", "TEXT")
+    ensure_column(cur, "interactions", "notes", "TEXT")
+
+    count = cur.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+    if count == 0:
+        seed_data = [
+            ("TechCorp", 90000, 9, 100, "Hot", "SaaS", "North America", "Maya Chen", "maya@techcorp.com", "Proposal", datetime.utcnow() - timedelta(days=1), "Requested enterprise pricing.", datetime.utcnow() - timedelta(days=10)),
+            ("BlueSky Inc", 55000, 8, 90, "Hot", "Technology", "Europe", "Owen Park", "owen@bluesky.io", "Demo", datetime.utcnow() - timedelta(days=2), "Strong product fit.", datetime.utcnow() - timedelta(days=8)),
+            ("FinCore", 30000, 7, 80, "Hot", "Finance", "North America", "Priya Menon", "priya@fincore.com", "Negotiation", datetime.utcnow() - timedelta(days=1), "Needs compliance summary.", datetime.utcnow() - timedelta(days=6)),
+            ("SmartComm", 25000, 7, 70, "Warm", "Telecom", "APAC", "Leo Tan", "leo@smartcomm.com", "Discovery", datetime.utcnow() - timedelta(days=4), "Interested in outbound automation.", datetime.utcnow() - timedelta(days=5)),
+            ("EcoEnergy", 18000, 6, 65, "Warm", "Energy", "Europe", "Sara Nordin", "sara@ecoenergy.eu", "Prospecting", datetime.utcnow() - timedelta(days=5), "Early stage but budget approved.", datetime.utcnow() - timedelta(days=4)),
+            ("MediCare Plus", 22000, 5, 55, "Warm", "Healthcare", "APAC", "Arjun Das", "arjun@medicareplus.com", "Prospecting", datetime.utcnow() - timedelta(days=7), "Needs case study.", datetime.utcnow() - timedelta(days=3)),
+            ("DataFlow", 12000, 5, 50, "Cold", "Analytics", "North America", "Nina Shah", "nina@dataflow.ai", "Nurture", datetime.utcnow() - timedelta(days=12), "Budget cycle next quarter.", datetime.utcnow() - timedelta(days=12)),
+            ("EduLearning", 8000, 4, 40, "Cold", "Education", "Europe", "Luca Meyer", "luca@edulearning.com", "Nurture", datetime.utcnow() - timedelta(days=14), "Price sensitive.", datetime.utcnow() - timedelta(days=14)),
+        ]
+        cur.executemany(
+            """
+            INSERT INTO leads (
+                company, budget, interest, score, category, industry, region,
+                contact_name, contact_email, deal_stage, last_contacted, notes, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    company, budget, interest, score, category, industry, region,
+                    contact_name, contact_email, deal_stage, last_contacted.isoformat(), notes, created_at.isoformat(),
+                )
+                for (
+                    company, budget, interest, score, category, industry, region,
+                    contact_name, contact_email, deal_stage, last_contacted, notes, created_at,
+                ) in seed_data
+            ],
+        )
+
     conn.commit()
     conn.close()
 
-    return {
-        "objective": f"Launch a high-impact {req.platform} campaign to drive {req.goal} for {req.product}.",
-        "theme": "Authority & Trust Building",
-        "cta": "Schedule Your Free Strategic Consultation",
-        "outcome": "20-30% increase in qualified inbound leads within Q1.",
-        "ai_insight": f"Data indicates {req.platform} algorithms are currently prioritizing educational content for {req.goal} campaigns."
-    }
 
-# 2. Sales Pitch Generator
-@app.post("/pitch")
-def generate_pitch(req: PitchRequest):
-    return {
-        "problem": f"{req.target} often face fragmented processes that kill team productivity and slow down revenue cycles.",
-        "value_prop": f"{req.product} unifies your workflow, automating manual tasks to recover 15+ hours per week per rep.",
-        "objection": "Implementation takes less than 24 hours with zero downtime, unlike legacy competitors.",
-        "closing": "If we could show you a 3x ROI in the first month, would you be open to a 15-minute walkthrough?",
-        "ai_insight": f"Emphasize speed to value—{req.target} care most about immediate efficiency gains right now."
-    }
+init_db()
 
-# 3. Lead Scoring
-@app.post("/leads")
-def score_lead(req: ScoreRequest):
-    # Deterministic Scoring Logic
-    score = 20 # Base Score
-    
-    # Budget Scoring (Max 40)
-    if req.budget >= 50000: score += 40
-    elif req.budget >= 10000: score += 30
-    elif req.budget >= 5000: score += 15
-    else: score += 5
-    
-    # Interest Scoring (Max 40)
-    if req.interest >= 9: score += 40
-    elif req.interest >= 7: score += 30
-    elif req.interest >= 5: score += 15
-    else: score += 5
-    
-    score = min(100, score)
-    
-    # Category Deterministic Logic
+
+INDUSTRY_BASELINES = {
+    "saas": {"demand": 78, "competition": 72, "opportunity": 70, "channels": {"LinkedIn": 88, "Email": 75, "Instagram": 38}},
+    "finance": {"demand": 68, "competition": 85, "opportunity": 58, "channels": {"LinkedIn": 82, "Email": 86, "Instagram": 24}},
+    "technology": {"demand": 74, "competition": 69, "opportunity": 67, "channels": {"LinkedIn": 79, "Email": 68, "Instagram": 45}},
+    "healthcare": {"demand": 81, "competition": 58, "opportunity": 76, "channels": {"LinkedIn": 58, "Email": 92, "Instagram": 28}},
+    "ecommerce": {"demand": 72, "competition": 77, "opportunity": 60, "channels": {"LinkedIn": 40, "Email": 61, "Instagram": 94}},
+}
+
+REGION_MULTIPLIERS = {
+    "Global": {"demand": 1.0, "competition": 1.0},
+    "North America": {"demand": 1.15, "competition": 1.2},
+    "NA": {"demand": 1.15, "competition": 1.2},
+    "Europe": {"demand": 1.08, "competition": 1.12},
+    "EU": {"demand": 1.08, "competition": 1.12},
+    "APAC": {"demand": 1.25, "competition": 1.05},
+}
+
+TIME_MULTIPLIERS = {
+    "Short": {"demand": 0.9, "opportunity": 0.82},
+    "Mid": {"demand": 1.0, "opportunity": 1.0},
+    "Long": {"demand": 1.18, "opportunity": 1.26},
+}
+
+def category_for_score(score: int) -> str:
     if score >= 80:
-        category = "Hot"
-        recommendation = "Schedule a discovery call within 3 days" # Strict prompt output
-    elif score >= 55: # Strict threshold 55-79
-        category = "Warm"
-        recommendation = "Send a personalized nurture email with a relevant case study"
-    else:
-        category = "Cold"
-        recommendation = "Add to monthly newsletter for long-term brand awareness"
-        
-    explanation = f"Moderate interest ({req.interest}/10) combined with budget of ${req.budget} results in a {category} score."
-    if category == "Hot":
-        explanation = f"High interest ({req.interest}/10) and strong budget indicates immediate readiness."
-    elif category == "Cold":
-        explanation = f"Low interest ({req.interest}/10) suggests long-term nurturing is required."
+        return "Hot"
+    if score >= 55:
+        return "Warm"
+    return "Cold"
 
+
+def score_lead_formula(budget: int, interest: int) -> int:
+    score = 20
+    if budget >= 50000:
+        score += 40
+    elif budget >= 10000:
+        score += 30
+    elif budget >= 5000:
+        score += 15
+    else:
+        score += 5
+
+    if interest >= 9:
+        score += 40
+    elif interest >= 7:
+        score += 30
+    elif interest >= 5:
+        score += 15
+    else:
+        score += 5
+
+    return min(100, score)
+
+
+def recommendation_for_category(category: str) -> str:
+    if category == "Hot":
+        return "Schedule a discovery call within 3 days"
+    if category == "Warm":
+        return "Send a personalized nurture email with a relevant case study"
+    return "Add to monthly newsletter for long-term brand awareness"
+
+
+def serialize_rows(rows: List[sqlite3.Row]) -> List[Dict[str, Any]]:
+    return [dict(row) for row in rows]
+
+
+def make_hash(payload: Dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def get_cached_output(feature: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    conn = get_db()
+    cur = conn.cursor()
+    row = cur.execute(
+        "SELECT output FROM ai_outputs WHERE feature = ? AND input_hash = ?",
+        (feature, make_hash(payload)),
+    ).fetchone()
+    conn.close()
+    if not row:
+        return None
+    try:
+        return json.loads(row["output"])
+    except json.JSONDecodeError:
+        return None
+
+
+def save_cached_output(feature: str, payload: Dict[str, Any], data: Dict[str, Any]) -> None:
     conn = get_db()
     cur = conn.cursor()
     cur.execute(
-        "INSERT INTO leads (company, budget, interest, score, category, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-        (req.company, req.budget, req.interest, score, category, datetime.now().isoformat())
+        """
+        INSERT INTO ai_outputs (feature, input_hash, output)
+        VALUES (?, ?, ?)
+        ON CONFLICT(feature, input_hash) DO UPDATE SET output = excluded.output, created_at = CURRENT_TIMESTAMP
+        """,
+        (feature, make_hash(payload), json.dumps(data)),
     )
     conn.commit()
     conn.close()
-    
-    return {
-        "score": score,
-        "category": category,
-        "recommendation": recommendation,
-        "explanation": explanation
-    }
-
-# 4. Market Analysis
-@app.post("/market")
-def market_analysis_tool(req: AnalysisRequest):
-    return {
-        "trend": "Rapid Upward Growth",
-        "demand": "High Demand (85/100)",
-        "competition": "Moderate Saturation",
-        "opportunity": "Expansion into Enterprise Niche",
-        "ai_insight": f"{req.industry} markets are currently rewarding vertical integration and specialized service providers."
-    }
-
-# 5. Channel Content Generator
-@app.post("/social")
-def generate_social(req: ContentRequest):
-    return {
-        "caption": f"Struggling to scale your operations? 🚀\n\n{req.product} empowers teams to break through bottlenecks and achieve predictable growth. Stop guessing and start scaling today.\n\n👇 Drop a comment for a free playbook.",
-        "hashtags": f"#{req.product.replace(' ', '')} #{req.platform} #GrowthHacking #SaaS #Productivity",
-        "ai_insight": f"Posts with questions in the first line see 2x higher engagement on {req.platform}."
-    }
-
-# 6. Personalized Email
-@app.post("/email")
-def generate_email(req: EmailRequest):
-    recipient = req.recipient.strip()
-    context = req.context.strip()
-    product = req.product.strip()
-
-    body = f"""Hi {recipient},
-
-I noticed that teams dealing with {context} often struggle with manual follow-ups and low-quality engagement.
-
-{product} helps automate outreach, prioritize high-intent leads, and improve response rates—without increasing workload.
-
-Would you be open to a quick 10-minute conversation this week to see if this could help your team?
-
-Best regards,
-SalesSpark AI Team
-"""
-
-    return {
-        "subject": f"Quick idea to improve your {context}",
-        "body": body,
-        "follow_up_tip": "If there’s no reply, send a short follow-up after 3 days referencing this email."
-    }
-
-# ==================== 7. AI SALES COPILOT CHATBOT (Groq-Powered) ====================
-
-try:
-    from backend.ai_service import generate_chat_response   # Run from project root
-except ImportError:
-    from ai_service import generate_chat_response            # Run from inside backend/
 
 
-# --- Helper: Fetch DB Context for the AI system prompt ---
-def get_chat_db_context() -> dict:
-    """Returns live pipeline metrics from SQLite to inject into the AI system prompt."""
+def ai_or_fallback(feature: str, payload: Dict[str, Any], system_prompt: str, user_prompt: str, fallback: Dict[str, Any]) -> Dict[str, Any]:
+    cached = get_cached_output(feature, payload)
+    if cached:
+        return cached
+    result = generate_json(
+        feature=feature,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        fallback=fallback,
+    )
+    save_cached_output(feature, payload, result)
+    return result
+
+
+def get_pipeline_snapshot() -> Dict[str, Any]:
     conn = get_db()
     cur = conn.cursor()
-
-    cur.execute("SELECT COUNT(*) FROM leads")
-    total_leads = cur.fetchone()[0]
-
-    cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80")
-    hot_leads = cur.fetchone()[0]
-
-    cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 55 AND score < 80")
-    warm_leads = cur.fetchone()[0]
-
-    cur.execute("SELECT COUNT(*) FROM leads WHERE score < 55")
-    cold_leads = cur.fetchone()[0]
-
-    cur.execute("SELECT AVG(score) FROM leads")
-    raw_avg = cur.fetchone()[0]
-    avg_score = round(raw_avg, 1) if raw_avg else 0.0
-
-    cur.execute("SELECT COUNT(*) FROM campaigns")
-    total_campaigns = cur.fetchone()[0]
-
-    # Top 5 leads (company name, category, score, budget)
-    cur.execute(
-        "SELECT id, company, category, score, budget FROM leads ORDER BY score DESC LIMIT 5"
-    )
-    top_leads = [
-        {"id": r[0], "company": r[1], "category": r[2], "score": r[3], "budget": r[4]}
-        for r in cur.fetchall()
-    ]
-
+    total_leads = cur.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+    hot_leads = cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0]
+    warm_leads = cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 55 AND score < 80").fetchone()[0]
+    cold_leads = cur.execute("SELECT COUNT(*) FROM leads WHERE score < 55").fetchone()[0]
+    avg_raw = cur.execute("SELECT AVG(score) FROM leads").fetchone()[0]
+    avg_score = round(avg_raw, 1) if avg_raw is not None else 0.0
+    total_campaigns = cur.execute("SELECT COUNT(*) FROM campaigns").fetchone()[0]
+    top_rows = cur.execute(
+        "SELECT id, company, category, score, budget FROM leads ORDER BY score DESC, created_at DESC LIMIT 5"
+    ).fetchall()
     conn.close()
 
     if total_leads == 0:
-        health = "Empty — no leads yet"
-    elif hot_leads >= 3 and avg_score > 50:
+        health = "Empty"
+    elif hot_leads >= 3 and avg_score >= 60:
         health = "Healthy"
     elif hot_leads == 0:
-        health = "At Risk — zero Hot leads"
+        health = "At Risk"
     else:
         health = "Needs Nurturing"
 
@@ -344,549 +406,664 @@ def get_chat_db_context() -> dict:
         "avg_score": avg_score,
         "total_campaigns": total_campaigns,
         "pipeline_health": health,
-        "top_leads": top_leads,
+        "top_leads": [dict(row) for row in top_rows],
     }
 
 
-# --- Chat Endpoint ---
-@app.post("/chat")
-def chat_assistant(req: ChatRequest):
-    """
-    Workflow: validate → fetch DB context → Groq AI → return structured response.
-    Success:  { "response": str }  — may also include { "action", "page", "url" } for navigation.
-    Failure:  { "error": str }
-    """
-    user_message = (req.message or "").strip()
-    if not user_message:
-        return {"error": "Message must not be empty."}
+def get_market_context() -> Dict[str, Any]:
+    conn = get_db()
+    cur = conn.cursor()
+    industries = [row[0] for row in cur.execute("SELECT DISTINCT industry FROM leads WHERE industry IS NOT NULL AND TRIM(industry) != '' ORDER BY industry").fetchall()]
+    regions = [row[0] for row in cur.execute("SELECT DISTINCT region FROM leads WHERE region IS NOT NULL AND TRIM(region) != '' ORDER BY region").fetchall()]
+    products = [row[0] for row in cur.execute("SELECT DISTINCT product FROM campaigns WHERE product IS NOT NULL AND TRIM(product) != '' ORDER BY product").fetchall()]
+    conn.close()
+    return {
+        "industries": industries,
+        "regions": regions,
+        "products": products,
+    }
 
-    db_context = get_chat_db_context()
 
+def try_market_search(industry: str, region: str, product: str = "") -> str:
+    tavily_key = os.getenv("TAVILY_API_KEY", "").strip()
+    serpapi_key = os.getenv("SERPAPI_API_KEY", "").strip()
+    query = f"{industry} market demand competition {region} {product}".strip()
+
+    if tavily_key:
+        try:
+            payload = json.dumps({
+                "api_key": tavily_key,
+                "query": query,
+                "search_depth": "basic",
+                "max_results": 3,
+            }).encode("utf-8")
+            req = Request(
+                "https://api.tavily.com/search",
+                data=payload,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urlopen(req, timeout=6) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            results = data.get("results", [])[:3]
+            if results:
+                return " ".join(f"{item.get('title', '')}: {item.get('content', '')}" for item in results)
+        except Exception as exc:
+            logger.warning("[market] Tavily lookup failed: %s", exc)
+
+    if serpapi_key:
+        try:
+            params = urlencode({"engine": "google", "q": query, "api_key": serpapi_key})
+            with urlopen(f"https://serpapi.com/search.json?{params}", timeout=6) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            organic = data.get("organic_results", [])[:3]
+            if organic:
+                return " ".join(f"{item.get('title', '')}: {item.get('snippet', '')}" for item in organic)
+        except Exception as exc:
+            logger.warning("[market] SerpAPI lookup failed: %s", exc)
+
+    return ""
+
+
+def build_demand_trend(demand_score: int, horizon: str, avg_score: float) -> List[int]:
+    seed = int(demand_score + avg_score)
+    random.seed(seed)
+    values = []
+    start = max(30, demand_score - 10)
+    growth = 3 if horizon == "Short" else 5 if horizon == "Mid" else 7
+    for idx in range(6):
+        noise = random.randint(-4, 4)
+        values.append(max(0, min(100, start + idx * growth + noise)))
+    return values
+
+
+
+def normalize_channels(channels: Any, default_channels: Dict[str, int]) -> Dict[str, int]:
+    if not isinstance(channels, dict):
+        return dict(default_channels)
+
+    normalized = {}
+    for key, fallback_val in default_channels.items():
+        raw = channels.get(key, fallback_val)
+        try:
+            val = int(float(raw))
+        except (TypeError, ValueError):
+            val = fallback_val
+        normalized[key] = max(0, min(100, val))
+    return normalized
+
+def log_interaction(lead_id: int, action_type: str, content: Dict[str, Any], scheduled_for: Optional[str] = None) -> None:
+    conn = get_db()
+    cur = conn.cursor()
     try:
-        result = generate_chat_response(
-            message=user_message,
-            db_context=db_context,
-            current_page=req.current_page or "unknown",
-            history=req.history or [],
-        )
-        logger.info("[CHAT] Response type: %s", result.get("action", "text"))
-        return result
+        cols = {row[1] for row in cur.execute("PRAGMA table_info(interactions)").fetchall()}
+        payload = json.dumps(content)
 
-    except ValueError as ve:
-        logger.error("[CHAT] Validation error: %s", ve)
-        return {"error": str(ve)}
+        if {"content", "scheduled_for"}.issubset(cols):
+            cur.execute(
+                "INSERT INTO interactions (lead_id, action_type, content, scheduled_for) VALUES (?, ?, ?, ?)",
+                (lead_id, action_type, payload, scheduled_for),
+            )
+        elif "notes" in cols:
+            cur.execute(
+                "INSERT INTO interactions (lead_id, action_type, notes) VALUES (?, ?, ?)",
+                (lead_id, action_type, payload),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO interactions (lead_id, action_type) VALUES (?, ?)",
+                (lead_id, action_type),
+            )
 
-    except Exception as e:
-        logger.error("[CHAT] Groq error (%s): %s", type(e).__name__, e)
-        return {"error": f"AI service temporarily unavailable ({type(e).__name__}). Check server logs."}
+        conn.commit()
+    finally:
+        conn.close()
 
-
-# ─── Debug / Health Endpoint ──────────────────────────────────────────────────
-@app.get("/chat/test")
-def chat_test():
-    """
-    Quick smoke-test endpoint. Open in browser:  http://127.0.0.1:8000/chat/test
-    Returns a live Groq response for 'Hello, who are you?' or a detailed error.
-    """
-    logger.info("[CHAT/TEST] Smoke test triggered.")
-    api_key = os.getenv("GROQ_API_KEY", "").strip()
-
-    if not api_key:
-        return {
-            "status": "error",
-            "reason": "GROQ_API_KEY is empty. Check your .env file."
-        }
-
-    db_context = get_chat_db_context()
-    try:
-        result = generate_chat_response(
-            message="Hello, who are you?",
-            db_context=db_context,
-            current_page="test",
-            history=[],
-        )
-        logger.info("[CHAT/TEST] Smoke test passed.")
-        return {
-            "status": "ok",
-            "api_key_prefix": api_key[:8] + "...",
-            "model": "llama-3.3-70b-versatile",
-            "test_response": result,
-        }
-    except Exception as e:
-        logger.error("[CHAT/TEST] Smoke test FAILED (%s): %s", type(e).__name__, e)
-        return {
-            "status": "error",
-            "error_type": type(e).__name__,
-            "error_detail": str(e),
-        }
-
-
-class MarketAnalysisRequest(BaseModel):
-    industry: str
-    region: str = "Global"
-    time_horizon: str = "Mid"  # Short, Mid, Long
-
-# ... (Existing Endpoints)
-
-@app.post("/market/analyze")
-def market_intelligence_analysis(req: MarketAnalysisRequest):
-    industry = req.industry.lower()
-    region = req.region
-    horizon = req.time_horizon
-
-    # 1. INDUSTRY BASELINES
-    baselines = {
-        "saas":       {"demand": 80, "comp": 85, "opp": 60, "channel": {"LinkedIn": 90, "Email": 70, "Instagram": 40}},
-        "finance":    {"demand": 65, "comp": 90, "opp": 55, "channel": {"LinkedIn": 85, "Email": 85, "Instagram": 20}},
-        "technology": {"demand": 75, "comp": 70, "opp": 70, "channel": {"LinkedIn": 80, "Email": 60, "Instagram": 50}},
-        "healthcare": {"demand": 85, "comp": 60, "opp": 85, "channel": {"LinkedIn": 50, "Email": 95, "Instagram": 30}},
-        "ecommerce":  {"demand": 60, "comp": 80, "opp": 40, "channel": {"LinkedIn": 30, "Email": 60, "Instagram": 95}},
+@app.post("/campaigns")
+def generate_campaign(req: CampaignRequest):
+    payload = {
+        "product": req.product.strip(),
+        "audience": (req.audience or "General buyers").strip(),
+        "platform": req.platform.strip(),
+        "goal": req.goal.strip(),
     }
-    
-    # Fallback/Default
-    base = baselines.get(industry, baselines["saas"])
-
-    # 2. REGION MULTIPLIERS
-    reg_mult = {
-        "Global":        {"demand": 1.0,  "comp": 1.0},
-        "North America": {"demand": 1.2,  "comp": 1.3}, 
-        "Europe":        {"demand": 1.1,  "comp": 1.2},
-        "APAC":          {"demand": 1.35, "comp": 1.1}, # Asia Pacific
-        "NA":            {"demand": 1.2,  "comp": 1.3}, # Handling code differences
-        "EU":            {"demand": 1.1,  "comp": 1.2},
+    fallback = {
+        "theme": f"{payload['product']} growth story for {payload['platform']}",
+        "marketing_strategy": f"Use proof-driven {payload['platform']} content tailored to {payload['audience']} and aligned to {payload['goal']}.",
+        "messaging_approach": f"Lead with the core business pain, show how {payload['product']} shortens time to value, and close with a low-friction next step.",
+        "cta": f"Book a quick strategy call to accelerate {payload['goal'].lower()}.",
+        "expected_outcome": f"Improved {payload['goal'].lower()} performance from a more targeted {payload['platform']} campaign.",
+        "ai_insight": f"{payload['platform']} audiences respond best when the first message clearly links {payload['product']} to measurable business impact.",
     }
-    r_factor = reg_mult.get(region, reg_mult["Global"])
+    ai_data = ai_or_fallback(
+        "campaign_generator",
+        payload,
+        "Return only JSON with keys: theme, marketing_strategy, messaging_approach, cta, expected_outcome, ai_insight. Keep each value concise and business-ready.",
+        f"Create a campaign for product={payload['product']}, audience={payload['audience']}, platform={payload['platform']}, goal={payload['goal']}.",
+        fallback,
+    )
+    objective = f"Launch a {payload['platform']} campaign for {payload['product']} focused on {payload['goal'].lower()}."
+    outcome = ai_data["expected_outcome"]
 
-    # 3. TIME HORIZON MULTIPLIERS
-    # specific impact on Demand and Opportunity
-    time_mult = {
-        "Short": {"demand": 0.85, "opp": 0.7, "curve": "flat"},
-        "Mid":   {"demand": 1.0,  "opp": 1.0, "curve": "linear"},
-        "Long":  {"demand": 1.3,  "opp": 1.5, "curve": "exponential"}
-    }
-    t_factor = time_mult.get(horizon, time_mult["Mid"])
-
-    # 4. CALCULATE FINAL SCORES (Clamped 0-100)
-    final_demand = min(100, max(0, base["demand"] * r_factor["demand"] * t_factor["demand"]))
-    final_comp = min(100, max(0, base["comp"] * r_factor["comp"]))
-    final_opp = min(100, max(0, base["opp"] * t_factor["opp"]))
-    
-    saturation = (final_comp + (100 - final_opp)) / 2
-
-    # 5. GENERATE TREND CURVE
-    demand_trend = []
-    points = 6
-    
-    if t_factor["curve"] == "flat": # Short term: Volatile/Flat
-        current = final_demand
-        for i in range(points):
-            noise = random.randint(-8, 8)
-            demand_trend.append(min(100, max(0, current + noise)))
-            
-    elif t_factor["curve"] == "linear": # Mid term: Steady growth
-        start = final_demand * 0.8
-        step = (final_demand * 1.1 - start) / points
-        for i in range(points):
-            val = start + (step * i) + random.randint(-2, 2)
-            demand_trend.append(min(100, max(0, val)))
-            
-    else: # Long term: Exponential
-        start = final_demand * 0.6
-        growth_rate = 1.15 if industry == "healthcare" and region in ["APAC", "Asia Pacific"] else 1.1
-        for i in range(points):
-            val = start * (growth_rate ** i)
-            demand_trend.append(min(100, max(0, val)))
-
-    # 6. DYNAMIC INSIGHT GENERATION
-    insight_tone = "neutral"
-    if final_opp > 75: insight_tone = "positive"
-    elif final_comp > 80: insight_tone = "cautious"
-    
-    if insight_tone == "positive":
-        insight = f"🚀 **High-Growth Opportunity:** {req.industry} in {req.region} is showing explosive potential over the {req.time_horizon} term. With demand at {(final_demand):.0f}/100 and opportunity at {(final_opp):.0f}/100, this is a prime market for aggressive expansion. Competitive pressure is manageable."
-    elif insight_tone == "cautious":
-        insight = f"⚠️ **Saturated Market:** {req.industry} in {req.region} is heavily contested (Competition: {(final_comp):.0f}/100). While demand is present ({(final_demand):.0f}/100), costs of acquisition will be high. Differentiate via niche positioning rather than broad targeting."
-    else:
-        insight = f"⚖️ **Stable Market:** {req.industry} in {req.region} shows steady, predictable behavior. Demand is moderate ({(final_demand):.0f}/100). Focus on operational efficiency and customer retention."
-
-    if industry == "healthcare" and region in ["APAC", "Asia Pacific"] and horizon == "Long":
-        insight = "🔥 **Strategic Unicorn Logic:** Healthcare in Asia-Pacific shows explosive long-term demand with low competitive pressure. This is a rare high-opportunity market. Early positioning and compliance-focused branding will deliver outsized returns over 24-36 months."
+    conn = get_db()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO campaigns (
+            product, audience, platform, goal, objective, theme,
+            marketing_strategy, messaging_approach, cta, expected_outcome,
+            outcome, ai_insight, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            payload["product"], payload["audience"], payload["platform"], payload["goal"], objective,
+            ai_data["theme"], ai_data["marketing_strategy"], ai_data["messaging_approach"], ai_data["cta"],
+            ai_data["expected_outcome"], outcome, ai_data["ai_insight"], datetime.utcnow().isoformat(),
+        ),
+    )
+    conn.commit()
+    conn.close()
 
     return {
-        "insight": insight,
-        "demand_trend": demand_trend,
-        "market_matrix": {
-            "competition": round(final_comp),
-            "opportunity": round(final_opp),
-            "saturation": round(saturation)
-        },
-        "channels": base["channel"],
-        "meta": {
-             "industry": req.industry,
-             "horizon": req.time_horizon,
-             "scores": {"d": final_demand, "c": final_comp, "o": final_opp}
-        }
+        "objective": objective,
+        "theme": ai_data["theme"],
+        "marketing_strategy": ai_data["marketing_strategy"],
+        "messaging_approach": ai_data["messaging_approach"],
+        "cta": ai_data["cta"],
+        "outcome": outcome,
+        "expected_outcome": ai_data["expected_outcome"],
+        "ai_insight": ai_data["ai_insight"],
     }
 
-# ==================== PHASE 2: INTELLIGENCE ENDPOINTS ====================
 
-# 7. Dashboard
-@app.get("/dashboard")
-def dashboard():
+@app.post("/pitch")
+def generate_pitch(req: PitchRequest):
+    payload = {"product": req.product.strip(), "target": req.target.strip()}
+    fallback = {
+        "opening_hook": f"{payload['target']} are under pressure to deliver more revenue with less manual work.",
+        "problem_framing": f"Most {payload['target']} lose momentum because reps juggle disconnected workflows and inconsistent follow-up.",
+        "product_positioning": f"{payload['product']} brings lead intelligence, outreach, and execution into one workflow so teams move faster.",
+        "objection_handling": "Implementation is lightweight, ROI is visible quickly, and adoption is easier than replacing a full sales stack.",
+        "closing_statement": "If this could improve pipeline velocity in the next 30 days, would you be open to a short walkthrough?",
+    }
+    ai_data = ai_or_fallback(
+        "sales_pitch",
+        payload,
+        "Return only JSON with keys: opening_hook, problem_framing, product_positioning, objection_handling, closing_statement.",
+        f"Write a sales pitch for product={payload['product']} targeting {payload['target']}.",
+        fallback,
+    )
+    return {
+        "opening_hook": ai_data["opening_hook"],
+        "problem_framing": ai_data["problem_framing"],
+        "product_positioning": ai_data["product_positioning"],
+        "objection_handling": ai_data["objection_handling"],
+        "closing_statement": ai_data["closing_statement"],
+        "problem": ai_data["problem_framing"],
+        "value_prop": ai_data["product_positioning"],
+        "objection": ai_data["objection_handling"],
+        "closing": ai_data["closing_statement"],
+        "ai_insight": ai_data["opening_hook"],
+    }
+
+
+@app.post("/leads")
+def score_lead(req: ScoreRequest):
+    score = score_lead_formula(req.budget, req.interest)
+    category = category_for_score(score)
+    recommendation = recommendation_for_category(category)
+
+    payload = {
+        "company": req.company,
+        "budget": req.budget,
+        "interest": req.interest,
+        "score": score,
+        "category": category,
+        "industry": req.industry or "Unknown",
+        "region": req.region or "Unknown",
+    }
+    fallback = {
+        "explanation": f"This lead is {category.lower()} because the budget and interest signals combine to a score of {score}, indicating {recommendation.lower()}.",
+    }
+    ai_data = ai_or_fallback(
+        "lead_scoring_explanation",
+        payload,
+        "Return only JSON with key explanation. Explain why the lead score maps to Hot, Warm, or Cold in 1-2 sentences.",
+        f"Explain lead quality for company={req.company}, budget={req.budget}, interest={req.interest}, score={score}, category={category}.",
+        fallback,
+    )
+
     conn = get_db()
     cur = conn.cursor()
-    
-    cur.execute("SELECT COUNT(*) FROM campaigns")
-    total_campaigns = cur.fetchone()[0]
-    
-    cur.execute("SELECT COUNT(*) FROM leads")
-    total_leads = cur.fetchone()[0]
-    
-    use_synthetic = (total_leads < 10) or (total_campaigns == 0)
-    
-    if use_synthetic:
-        data_source = "Simulated (Demo)"
-        metrics = {
-            "total_leads": 20,
-            "hot_leads": 5,
-            "avg_lead_score": 56.5,
-            "total_campaigns": 12,
-            "best_platform": "LinkedIn",
-            "lead_quality_trend": "Stable"
-        }
-    else:
-        cur.execute("SELECT COUNT(*) FROM leads WHERE category='Hot'")
-        hot_leads = cur.fetchone()[0]
-        
-        cur.execute("SELECT AVG(score) FROM leads")
-        avg_score = cur.fetchone()[0] or 0
-        
-        cur.execute("SELECT platform, COUNT(*) as cnt FROM campaigns GROUP BY platform ORDER BY cnt DESC LIMIT 1")
-        platform_row = cur.fetchone()
-        best_platform = platform_row[0] if platform_row else "N/A"
-        
-        data_source = "Live Database"
-        metrics = {
-            "total_leads": total_leads,
-            "hot_leads": hot_leads,
-            "avg_lead_score": round(avg_score, 1),
-            "total_campaigns": total_campaigns,
-            "best_platform": best_platform,
-            "lead_quality_trend": "Improving" if avg_score > 60 else "Stable"
-        }
-    
+    cur.execute(
+        """
+        INSERT INTO leads (
+            company, budget, interest, score, category, industry, region,
+            contact_name, contact_email, deal_stage, last_contacted, notes, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            req.company.strip(), req.budget, req.interest, score, category, req.industry, req.region,
+            req.contact_name, req.contact_email, req.deal_stage, datetime.utcnow().isoformat(), req.notes,
+            datetime.utcnow().isoformat(),
+        ),
+    )
+    conn.commit()
     conn.close()
-    return {"data_source": data_source, "metrics": metrics}
 
-# 7B. GET ALL LEADS (FOR DROPDOWN)
+    return {
+        "score": score,
+        "category": category,
+        "recommendation": recommendation,
+        "explanation": ai_data["explanation"],
+    }
+
+
 @app.get("/leads")
 def get_all_leads():
-    """Fetch all leads for dropdown selection"""
     conn = get_db()
     cur = conn.cursor()
-    
-    cur.execute("SELECT id, category, score FROM leads ORDER BY score DESC")
-    rows = cur.fetchall()
+    rows = cur.execute(
+        """
+        SELECT id, company, budget, interest, score, category, industry, region,
+               contact_name, contact_email, deal_stage, last_contacted, notes, created_at
+        FROM leads
+        ORDER BY score DESC, created_at DESC
+        """
+    ).fetchall()
     conn.close()
-    
-    leads = [{"id": row[0], "category": row[1], "score": row[2]} for row in rows]
-    return {"leads": leads}
+    return {"leads": serialize_rows(rows)}
 
-# 8. Campaign Prediction
+
+@app.post("/market")
+def market_analysis_tool(req: AnalysisRequest):
+    industry = req.industry.strip() or "Technology"
+    product = (req.product or "your solution").strip() or "your solution"
+    baseline = INDUSTRY_BASELINES.get(industry.lower(), INDUSTRY_BASELINES["technology"])
+    fallback = {
+        "demand_insight": f"Demand remains solid for {industry} buyers seeking tools that reduce manual work and improve visibility.",
+        "competition_overview": f"Competition in {industry} is active, so differentiation should emphasize measurable outcomes over generic features.",
+        "opportunity_summary": f"{product} can win by focusing on faster execution, clear ROI, and targeted messaging for operational teams.",
+    }
+    ai_data = ai_or_fallback(
+        "market_tool",
+        {"industry": industry, "product": product},
+        "Return only JSON with keys: demand_insight, competition_overview, opportunity_summary.",
+        f"Analyze market demand, competition, and opportunity for industry={industry}, product={product}.",
+        fallback,
+    )
+    return {
+        "trend": ai_data["demand_insight"],
+        "demand": f"Demand Index {baseline['demand']}/100",
+        "competition": ai_data["competition_overview"],
+        "opportunity": ai_data["opportunity_summary"],
+        "demand_insight": ai_data["demand_insight"],
+        "competition_overview": ai_data["competition_overview"],
+        "opportunity_summary": ai_data["opportunity_summary"],
+        "ai_insight": ai_data["opportunity_summary"],
+    }
+
+
+@app.post("/social")
+def generate_social(req: ContentRequest):
+    payload = {"product": req.product.strip(), "platform": req.platform.strip()}
+    tone_map = {
+        "LinkedIn": "professional and insight-driven",
+        "Instagram": "visual, energetic, and lifestyle-oriented",
+        "X / Twitter": "sharp, concise, and timely",
+        "Twitter": "sharp, concise, and timely",
+    }
+    tone = tone_map.get(payload["platform"], "professional")
+    fallback = {
+        "caption": f"{payload['product']} helps teams move faster with clearer pipeline decisions and better outreach execution.",
+        "hashtags": f"#{payload['product'].replace(' ', '')} #SalesAI #Growth #B2B",
+        "tone": tone,
+        "ai_insight": f"The message is adapted to {payload['platform']} with a {tone} tone.",
+    }
+    ai_data = ai_or_fallback(
+        "social_generator",
+        payload,
+        "Return only JSON with keys: caption, hashtags, tone, ai_insight. Hashtags must be a single string.",
+        f"Create a {payload['platform']} social post for product={payload['product']}. Tone should match the platform.",
+        fallback,
+    )
+    return ai_data
+
+
+@app.post("/email")
+def generate_email(req: EmailRequest):
+    payload = {
+        "recipient": req.recipient.strip(),
+        "product": req.product.strip(),
+        "context": req.context.strip(),
+    }
+    fallback = {
+        "subject": f"Idea to improve {payload['context']}",
+        "body": (
+            f"Hi {payload['recipient']},\n\n"
+            f"I noticed the challenge around {payload['context']}. {payload['product']} helps teams prioritize the right leads, automate follow-up, and keep deals moving.\n\n"
+            "Would you be open to a short conversation this week?\n\nBest regards,\nSalesSpark AI"
+        ),
+        "follow_up_suggestion": "Follow up in 3 days with a short proof point or customer outcome.",
+    }
+    ai_data = ai_or_fallback(
+        "email_outreach",
+        payload,
+        "Return only JSON with keys: subject, body, follow_up_suggestion.",
+        f"Write a personalized outreach email to {payload['recipient']} about {payload['product']} using this context: {payload['context']}.",
+        fallback,
+    )
+    return {
+        "subject": ai_data["subject"],
+        "body": ai_data["body"],
+        "follow_up_suggestion": ai_data["follow_up_suggestion"],
+        "follow_up_tip": ai_data["follow_up_suggestion"],
+    }
+
 @app.post("/predict/campaign")
 def predict_campaign(req: PredictionRequest):
     conn = get_db()
     cur = conn.cursor()
-    
-    cur.execute("SELECT COUNT(*) FROM leads")
-    total_leads = cur.fetchone()[0]
-    
-    cur.execute("SELECT AVG(score) FROM leads")
-    avg_score = cur.fetchone()[0] or 0
-    
-    cur.execute("SELECT COUNT(*) FROM leads WHERE category='Hot'")
-    hot_leads = cur.fetchone()[0]
-    
-    cur.execute("SELECT COUNT(*) FROM campaigns WHERE platform=?", (req.platform,))
-    platform_campaigns = cur.fetchone()[0]
-    
+    total_leads = cur.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+    avg_raw = cur.execute("SELECT AVG(score) FROM leads").fetchone()[0]
+    avg_score = round(avg_raw, 1) if avg_raw is not None else 0.0
+    hot_leads = cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0]
+    platform_campaigns = cur.execute("SELECT COUNT(*) FROM campaigns WHERE platform = ?", (req.platform,)).fetchone()[0]
+    goal_campaigns = cur.execute("SELECT COUNT(*) FROM campaigns WHERE goal = ?", (req.goal,)).fetchone()[0]
     conn.close()
-    
-    use_synthetic = (total_leads < 5) or (platform_campaigns == 0)
-    
-    if use_synthetic:
-        data_source = "Simulated (Demo)"
-        avg_score = 58.0
-        total_leads = 20
-        hot_leads = 5
-        platform_campaigns = 3
-    else:
-        data_source = "Live Database"
-    
-    engagement_base = 40 + (avg_score * 0.6)
-    if platform_campaigns == 0:
-        engagement_base -= 10
-    
-    engagement_prob = int(max(30, min(90, engagement_base)))
-    conversion_prob = round(engagement_prob * 0.15)
-    
-    if platform_campaigns == 0:
+
+    engagement_score = 40 + (avg_score * 0.6)
+    engagement_prob = int(max(0, min(100, round(engagement_score))))
+    hot_ratio = (hot_leads / total_leads) if total_leads else 0
+    conversion_prob = int(max(5, min(65, round((engagement_prob * 0.18) + (hot_ratio * 20)))))
+
+    if total_leads == 0:
         risk = "High"
-    elif avg_score >= 60:
+        data_source = "Rule-based fallback"
+    elif avg_score >= 70 and hot_leads >= 3:
         risk = "Low"
-    else:
+        data_source = "Live Database"
+    elif avg_score >= 50:
         risk = "Medium"
-    
-    explanation = f"Based on {total_leads} leads (avg: {avg_score:.1f}/100) and {platform_campaigns} {req.platform} campaigns. {risk} risk."
-    
+        data_source = "Live Database"
+    else:
+        risk = "High"
+        data_source = "Live Database"
+
+    payload = {
+        "platform": req.platform,
+        "goal": req.goal,
+        "average_lead_score": avg_score,
+        "total_leads": total_leads,
+        "engagement_score": engagement_prob,
+    }
+    fallback = {
+        "reasoning": f"Predicted engagement is {engagement_prob}% using the fixed formula 40 + (average lead score x 0.6). Current average score is {avg_score}/100 across {total_leads} leads.",
+        "campaign_improvement_suggestions": "Increase hot lead volume, tighten audience targeting, and reuse top-performing messaging on the selected platform.",
+    }
+    ai_data = ai_or_fallback(
+        "campaign_prediction_explanation",
+        payload,
+        "Return only JSON with keys: reasoning, campaign_improvement_suggestions.",
+        f"Explain a campaign prediction for platform={req.platform}, goal={req.goal}, average lead score={avg_score}, total leads={total_leads}, predicted engagement={engagement_prob}.",
+        fallback,
+    )
+
     return {
         "engagement_prob": engagement_prob,
+        "predicted_engagement": engagement_prob,
         "conversion_prob": conversion_prob,
         "risk_level": risk,
         "data_source": data_source,
         "metrics_used": {
             "total_leads": total_leads,
-            "avg_lead_score": round(avg_score, 1),
+            "avg_lead_score": avg_score,
             "platform_campaigns": platform_campaigns,
-            "hot_leads": hot_leads
+            "goal_campaigns": goal_campaigns,
+            "hot_leads": hot_leads,
         },
-        "explanation": explanation
+        "reasoning": ai_data["reasoning"],
+        "suggestions": ai_data["campaign_improvement_suggestions"],
+        "explanation": f"{ai_data['reasoning']} Suggested improvements: {ai_data['campaign_improvement_suggestions']}",
     }
 
-# 9. Recommendations
-@app.get("/recommendations")
-def recommendations():
+
+@app.post("/market/analyze")
+def market_intelligence_analysis(req: MarketAnalysisRequest):
+    industry = req.industry.strip() or "saas"
+    region = req.region.strip() or "Global"
+    horizon = req.time_horizon.strip() or "Mid"
+
+    db_context = get_market_context()
+    snapshot = get_pipeline_snapshot()
+    baseline = INDUSTRY_BASELINES.get(industry.lower(), INDUSTRY_BASELINES["saas"])
+    region_mult = REGION_MULTIPLIERS.get(region, REGION_MULTIPLIERS["Global"])
+    time_mult = TIME_MULTIPLIERS.get(horizon, TIME_MULTIPLIERS["Mid"])
+
+    demand_score = int(max(0, min(100, round(baseline["demand"] * region_mult["demand"] * time_mult["demand"]))))
+    competition_score = int(max(0, min(100, round(baseline["competition"] * region_mult["competition"]))))
+    opportunity_score = int(max(0, min(100, round(baseline["opportunity"] * time_mult["opportunity"]))))
+    saturation = int(round((competition_score + (100 - opportunity_score)) / 2))
+    search_summary = try_market_search(industry, region)
+
+    payload = {
+        "industry": industry,
+        "region": region,
+        "time_horizon": horizon,
+        "industries_in_leads": db_context["industries"],
+        "regions_in_leads": db_context["regions"],
+        "campaign_products": db_context["products"],
+        "search_summary": search_summary,
+    }
+    fallback = {
+        "market_trend_summary": f"{industry.title()} demand in {region} remains healthy, especially where buyers want faster pipeline execution and clearer ROI.",
+        "demand_level": f"Demand is {demand_score}/100 with strongest interest around measurable efficiency gains.",
+        "competition_overview": f"Competition is {competition_score}/100, so tighter positioning and proof-based messaging are important.",
+        "opportunity_insights": f"Opportunity is {opportunity_score}/100. Align messaging with the industries already converting in your pipeline and prioritize the best-fit region.",
+        "channels": baseline["channels"],
+    }
+    ai_data = ai_or_fallback(
+        "market_intelligence",
+        payload,
+        "Return only JSON with keys: market_trend_summary, demand_level, competition_overview, opportunity_insights, channels. channels must be an object with channel names and 0-100 values.",
+        (
+            f"Analyze market intelligence for industry={industry}, region={region}, horizon={horizon}. "
+            f"Internal DB context: industries={db_context['industries']}, regions={db_context['regions']}, campaign products={db_context['products']}. "
+            f"Current pipeline snapshot: {snapshot}. External search summary: {search_summary or 'none available'}."
+        ),
+        fallback,
+    )
+
+    channels = normalize_channels(ai_data.get("channels"), baseline["channels"])
+    insight = (
+        f"Trend: {ai_data['market_trend_summary']} Demand: {ai_data['demand_level']} "
+        f"Competition: {ai_data['competition_overview']} Opportunity: {ai_data['opportunity_insights']}"
+    )
+
+    return {
+        "insight": insight,
+        "market_trend_summary": ai_data["market_trend_summary"],
+        "demand_level": ai_data["demand_level"],
+        "competition_overview": ai_data["competition_overview"],
+        "opportunity_insights": ai_data["opportunity_insights"],
+        "demand_trend": build_demand_trend(demand_score, horizon, snapshot["avg_score"]),
+        "market_matrix": {
+            "competition": competition_score,
+            "opportunity": opportunity_score,
+            "saturation": saturation,
+        },
+        "channels": channels,
+        "meta": {
+            "industry": industry,
+            "region": region,
+            "horizon": horizon,
+            "db_context": db_context,
+            "external_data_used": bool(search_summary),
+        },
+    }
+
+
+@app.get("/dashboard")
+def dashboard():
+    snapshot = get_pipeline_snapshot()
     conn = get_db()
     cur = conn.cursor()
-    
-    cur.execute("SELECT AVG(score) FROM leads")
-    avg_score = cur.fetchone()[0] or 0
-    
-    cur.execute("SELECT COUNT(*) FROM leads WHERE category='Hot'")
-    hot_leads = cur.fetchone()[0]
-    
-    cur.execute("SELECT platform, COUNT(*) as cnt FROM campaigns GROUP BY platform ORDER BY cnt DESC LIMIT 1")
-    row = cur.fetchone()
-    best_platform = row[0] if row else "LinkedIn"
-    
+    best_platform_row = cur.execute(
+        "SELECT platform, COUNT(*) AS cnt FROM campaigns GROUP BY platform ORDER BY cnt DESC, platform ASC LIMIT 1"
+    ).fetchone()
     conn.close()
-    
-    if avg_score < 50:
-        action = "Focus on lead quality improvement"
-        tip = "Current average score is below 50. Implement better targeting and qualification criteria."
-    elif hot_leads < 5:
-        action = "Increase hot lead pipeline"
-        tip = f"Only {hot_leads} hot leads in pipeline. Launch targeted campaigns on {best_platform}."
-    else:
-        action = "Optimize conversion process"
-        tip = f"Strong pipeline detected. Focus on closing hot leads and scaling {best_platform} campaigns."
-    
-    return {
-        "action": action,
-        "tip": tip,
-        "platform": best_platform
+    metrics = {
+        "total_leads": snapshot["total_leads"],
+        "hot_leads": snapshot["hot_leads"],
+        "warm_leads": snapshot["warm_leads"],
+        "cold_leads": snapshot["cold_leads"],
+        "avg_lead_score": snapshot["avg_score"],
+        "total_campaigns": snapshot["total_campaigns"],
+        "best_platform": best_platform_row["platform"] if best_platform_row else "N/A",
+        "lead_quality_trend": "Improving" if snapshot["avg_score"] >= 60 else "Stable" if snapshot["avg_score"] >= 45 else "Needs Attention",
     }
+    return {"data_source": "Live Database" if snapshot["total_leads"] else "Empty Database", "metrics": metrics}
 
-# 10. Segments
+
+@app.get("/recommendations")
+def recommendations():
+    snapshot = get_pipeline_snapshot()
+    if snapshot["avg_score"] < 50:
+        action = "Focus on lead quality improvement"
+        tip = "Average score is below target. Tighten qualification and use outreach focused on buyer pain points."
+    elif snapshot["hot_leads"] < 3:
+        action = "Increase hot lead pipeline"
+        tip = "There are too few hot leads. Prioritize high-intent accounts and launch a more targeted campaign."
+    else:
+        action = "Accelerate high-intent conversion"
+        tip = "The pipeline has enough hot leads to justify immediate outreach, demos, and tailored closing sequences."
+    return {"action": action, "tip": tip, "platform": "LinkedIn"}
+
+
 @app.get("/segments")
 def segments():
     conn = get_db()
     cur = conn.cursor()
-    
-    cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80")
-    high_value = cur.fetchone()[0]
-    
-    cur.execute("SELECT COUNT(*) FROM leads WHERE interest >= 8")
-    high_intent = cur.fetchone()[0]
-    
-    cur.execute("SELECT COUNT(*) FROM leads WHERE budget < 20000")
-    price_sensitive = cur.fetchone()[0]
-    
-    cur.execute("SELECT COUNT(*) FROM leads WHERE score < 40")
-    low_intent = cur.fetchone()[0]
-    
-    conn.close()
-    
-    return {
-        "high_value": high_value,
-        "high_intent": high_intent,
-        "price_sensitive": price_sensitive,
-        "low_intent": low_intent
+    result = {
+        "high_value": cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0],
+        "high_intent": cur.execute("SELECT COUNT(*) FROM leads WHERE interest >= 8").fetchone()[0],
+        "price_sensitive": cur.execute("SELECT COUNT(*) FROM leads WHERE budget < 20000").fetchone()[0],
+        "low_intent": cur.execute("SELECT COUNT(*) FROM leads WHERE score < 40").fetchone()[0],
     }
+    conn.close()
+    return result
 
-# 11. Weekly Report
+
 @app.get("/weekly-report")
 def weekly_report():
-    conn = get_db()
-    cur = conn.cursor()
-    
-    cur.execute("SELECT COUNT(*) FROM leads")
-    total_leads = cur.fetchone()[0]
-    
-    cur.execute("SELECT AVG(score) FROM leads")
-    avg_score = cur.fetchone()[0] or 0
-    
-    cur.execute("SELECT COUNT(*) FROM leads WHERE category='Hot'")
-    hot_leads = cur.fetchone()[0]
-    
-    conn.close()
-    
-    summary = f"This week: {total_leads} total leads with {hot_leads} hot prospects. Average lead quality: {avg_score:.0f}/100. "
-    
-    if hot_leads >= 5:
-        summary += "Strong pipeline — prioritize immediate outreach to hot leads."
-    elif avg_score < 50:
-        summary += "Lead quality below target — review targeting criteria."
+    snapshot = get_pipeline_snapshot()
+    summary = (
+        f"This week: {snapshot['total_leads']} total leads, {snapshot['hot_leads']} hot leads, and an average score of {snapshot['avg_score']}/100. "
+    )
+    if snapshot["hot_leads"] >= 3:
+        summary += "Prioritize immediate outreach to your strongest opportunities."
+    elif snapshot["avg_score"] < 50:
+        summary += "Lead quality is below target, so improve targeting before scaling spend."
     else:
-        summary += "Moderate pipeline — continue nurturing warm leads."
-    
-    return {
-        "summary": summary,
-        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M")
-    }
+        summary += "Keep nurturing warm leads while building more high-intent demand."
+    return {"summary": summary, "generated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M")}
 
-# ==================== PHASE 3: SALES ACTION COPILOT ====================
-
-# 12. Next-Best-Action Engine (DYNAMIC)
 @app.get("/actions/next")
 def next_actions():
     conn = get_db()
     cur = conn.cursor()
-    
-    cur.execute("""
-        SELECT id, score, interest, category, created_at
+    rows = cur.execute(
+        """
+        SELECT id, company, score, interest, category, deal_stage, last_contacted
         FROM leads
-        ORDER BY (score * 0.7 + interest * 3.0) DESC
+        ORDER BY score DESC, interest DESC, created_at DESC
         LIMIT 5
-    """)
-    
-    rows = cur.fetchall()
+        """
+    ).fetchall()
     conn.close()
-    
     if not rows:
-        return {
-            "actions": [],
-            "message": "No leads available. Generate leads to see prioritized actions."
-        }
-    
+        return {"actions": [], "message": "No leads available. Generate leads to see prioritized actions."}
+
     actions = []
     for row in rows:
-        lead_id, score, interest, category, created_at = row
-        
-        if score >= 80:
-            action = "🔥 Call immediately — high close probability"
-            reason = f"Score {score}/100, ready to close"
-        elif score >= 60:
-            action = "📧 Send follow-up email with ROI case study"
-            reason = f"Score {score}/100, interest {interest}/10 — strong engagement"
-        elif score >= 45 and interest >= 7:
-            action = "📞 Schedule discovery call"
-            reason = f"Score {score}/100 with high interest ({interest}/10)"
-        elif score >= 35:
-            action = "🧠 Send value-based insight email"
-            reason = f"Score {score}/100 — build credibility first"
+        if row["score"] >= 85:
+            action = f"Contact highest scoring lead at {row['company']} today"
+        elif row["category"] == "Warm":
+            action = f"Schedule follow-up with {row['company']} and share a case study"
         else:
-            action = "⏳ Deprioritize — monitor for future intent"
-            reason = f"Score {score}/100, low priority"
-        
-        priority_score = round(score * 0.7 + interest * 3.0, 1)
-        
-        actions.append({
-            "lead_id": lead_id,
-            "category": category,
-            "action": action,
-            "reason": reason,
-            "score": score,
-            "priority_score": priority_score
-        })
-    
+            action = f"Generate outreach email for {row['company']} and re-engage the account"
+
+        reason = f"{row['company']} is in {row['deal_stage'] or 'Prospecting'} with score {row['score']}/100 and interest {row['interest']}/10."
+        priority_score = round(row["score"] * 0.75 + row["interest"] * 2.5, 1)
+        actions.append(
+            {
+                "lead_id": row["id"],
+                "company": row["company"],
+                "category": row["category"],
+                "action": action,
+                "reason": reason,
+                "score": row["score"],
+                "priority_score": priority_score,
+                "deal_stage": row["deal_stage"],
+            }
+        )
     return {"actions": actions}
 
-# 13. Sales Trend Intelligence
+
 @app.get("/trends/sales")
 def sales_trends():
     conn = get_db()
     cur = conn.cursor()
-    
-    cur.execute("SELECT COUNT(*) FROM leads")
-    total_leads = cur.fetchone()[0]
-    
-    if total_leads < 5:
+    total_leads = cur.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+    if total_leads < 4:
         conn.close()
         return {
             "trend": "insufficient",
             "trend_direction": "Insufficient data - add more leads",
             "risk_flags": [],
-            "opportunity_flags": [{"alert": "Build your pipeline to unlock trend analysis", "reason": f"Only {total_leads} leads"}],
-            "reason": f"Only {total_leads} leads. Need at least 5 for trend analysis."
+            "opportunity_flags": [{"alert": "Build your pipeline to unlock trend analysis", "reason": f"Only {total_leads} leads available."}],
+            "reason": f"Only {total_leads} leads. Need at least 4 for momentum analysis.",
         }
-    
-    window_size = min(7, total_leads // 2)
-    
-    cur.execute(f"SELECT score FROM leads ORDER BY created_at DESC LIMIT {window_size}")
-    recent_scores = [row[0] for row in cur.fetchall()]
-    
-    cur.execute(f"SELECT score FROM leads ORDER BY created_at ASC LIMIT {window_size}")
-    older_scores = [row[0] for row in cur.fetchall()]
-    
-    recent_avg = sum(recent_scores) / len(recent_scores) if recent_scores else 0
-    older_avg = sum(older_scores) / len(older_scores) if older_scores else 0
-    
-    cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80")
-    hot_count = cur.fetchone()[0]
-    
-    cur.execute("SELECT AVG(score) FROM leads")
-    avg_score = cur.fetchone()[0] or 0
-    
+
+    window_size = max(2, min(6, total_leads // 2))
+    recent_scores = [row[0] for row in cur.execute("SELECT score FROM leads ORDER BY created_at DESC LIMIT ?", (window_size,)).fetchall()]
+    older_scores = [row[0] for row in cur.execute("SELECT score FROM leads ORDER BY created_at ASC LIMIT ?", (window_size,)).fetchall()]
+    hot_count = cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0]
+    avg_score = cur.execute("SELECT AVG(score) FROM leads").fetchone()[0] or 0
     conn.close()
-    
-    trend_diff = recent_avg - older_avg
-    if trend_diff > 10:
+
+    recent_avg = sum(recent_scores) / len(recent_scores)
+    older_avg = sum(older_scores) / len(older_scores)
+    diff = round(recent_avg - older_avg, 1)
+
+    if diff > 8:
         trend = "improving"
-        trend_direction = f"↑ Lead quality up {trend_diff:.0f} points"
-        trend_reason = f"Recent {window_size} leads avg {recent_avg:.1f} vs older {window_size} avg {older_avg:.1f}"
-    elif trend_diff < -10:
+        trend_direction = f"Lead quality is up {diff} points"
+    elif diff < -8:
         trend = "declining"
-        trend_direction = f"↓ Lead quality down {abs(trend_diff):.0f} points"
-        trend_reason = f"Recent {window_size} leads avg {recent_avg:.1f} vs older {window_size} avg {older_avg:.1f}"
+        trend_direction = f"Lead quality is down {abs(diff)} points"
     else:
         trend = "stable"
-        trend_direction = f"→ Consistent lead quality"
-        trend_reason = f"Recent avg {recent_avg:.1f} ~= older avg {older_avg:.1f} (diff: {trend_diff:.1f})"
-    
+        trend_direction = "Lead quality is holding steady"
+
     risk_flags = []
-    if hot_count == 0 and total_leads > 5:
-        risk_flags.append({
-            "alert": "⚠️ No hot leads in pipeline",
-            "reason": f"0 Hot leads out of {total_leads} total"
-        })
+    if hot_count == 0:
+        risk_flags.append({"alert": "No hot leads in pipeline", "reason": "There are currently no leads above the 80-point threshold."})
     if avg_score < 50:
-        risk_flags.append({
-            "alert": "⚠️ Average lead quality below target",
-            "reason": f"Current avg score: {avg_score:.1f}/100 (target: 50+)"
-        })
+        risk_flags.append({"alert": "Average lead quality below target", "reason": f"Average score is {avg_score:.1f}/100."})
     if trend == "declining":
-        risk_flags.append({
-            "alert": "⚠️ Quality trending downward",
-            "reason": f"Recent leads {trend_diff:.0f} points lower than older leads"
-        })
-    
+        risk_flags.append({"alert": "Sales momentum is slipping", "reason": f"Recent leads are {abs(diff)} points weaker than older leads."})
+
     opportunity_flags = []
-    if hot_count >= 5:
-        opportunity_flags.append({
-            "alert": "🎯 Strong pipeline - prioritize closures",
-            "reason": f"{hot_count} Hot leads ready for immediate action"
-        })
+    if hot_count >= 3:
+        opportunity_flags.append({"alert": "Hot lead cluster ready for action", "reason": f"{hot_count} leads are in the Hot range."})
     if trend == "improving":
-        opportunity_flags.append({
-            "alert": "📈 Quality improving - scale campaigns",
-            "reason": f"Lead quality up {trend_diff:.0f} points - campaigns are working"
-        })
-    
+        opportunity_flags.append({"alert": "Momentum is improving", "reason": f"Recent lead quality is up by {diff} points."})
+
     return {
         "trend": trend,
         "trend_direction": trend_direction,
-        "trend_reason": trend_reason,
+        "trend_reason": f"Recent average: {recent_avg:.1f}, older average: {older_avg:.1f}, difference: {diff}.",
         "risk_flags": risk_flags,
         "opportunity_flags": opportunity_flags,
         "metrics": {
@@ -894,150 +1071,201 @@ def sales_trends():
             "recent_avg": round(recent_avg, 1),
             "older_avg": round(older_avg, 1),
             "hot_leads": hot_count,
-            "avg_score": round(avg_score, 1)
-        }
+            "avg_score": round(avg_score, 1),
+        },
     }
 
-# 14. Real-Time Alerts
+
 @app.get("/alerts")
 def get_alerts():
-    conn = get_db()
-    cur = conn.cursor()
-    
-    cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80")
-    hot_leads = cur.fetchone()[0]
-    
-    cur.execute("SELECT AVG(score) FROM leads")
-    avg_score_result = cur.fetchone()[0]
-    avg_score = avg_score_result if avg_score_result else 0
-    
-    cur.execute("SELECT COUNT(*) FROM leads")
-    recent_count = cur.fetchone()[0]
-    
-    conn.close()
-    
+    snapshot = get_pipeline_snapshot()
     alerts = []
-    
-    if hot_leads == 0:
-        alerts.append({
-            "level": "warning",
-            "message": "⚠️ No hot leads in pipeline",
-            "reason": f"0 leads with score ≥ 80"
-        })
-    
-    if avg_score < 50:
-        alerts.append({
-            "level": "warning",
-            "message": "⚠️ Average lead quality below target",
-            "reason": f"Current avg score: {avg_score:.1f}/100 (target: 50+)"
-        })
-    
-    if recent_count < 3:
-        alerts.append({
-            "level": "info",
-            "message": "📊 Low recent inbound activity",
-            "reason": f"Only {recent_count} leads in database"
-        })
-    
+    if snapshot["hot_leads"] == 0:
+        alerts.append({"level": "warning", "message": "No hot leads in pipeline", "reason": "Create or qualify more high-intent opportunities."})
+    if snapshot["avg_score"] < 50:
+        alerts.append({"level": "warning", "message": "Average lead quality below target", "reason": f"Average score is {snapshot['avg_score']}/100."})
+    if snapshot["total_leads"] < 3:
+        alerts.append({"level": "info", "message": "Low recent inbound activity", "reason": "The pipeline is still small, so analytics will be less stable."})
     return {"alerts": alerts}
 
-# 15. Deal Closure Assistant
+
 @app.post("/deal/assist")
 def deal_assist(req: DealAssistRequest):
-    lead_id = req.lead_id
     conn = get_db()
     cur = conn.cursor()
-    
-    cur.execute("SELECT score, budget, interest, category FROM leads WHERE id = ?", (lead_id,))
-    row = cur.fetchone()
+    row = cur.execute(
+        "SELECT id, company, budget, interest, score, category, industry, region, deal_stage, notes FROM leads WHERE id = ?",
+        (req.lead_id,),
+    ).fetchone()
     conn.close()
-    
     if not row:
-        return {"error": f"Lead ID {lead_id} not found"}
-    
-    score, budget, interest, category = row
-    
-    if score >= 70 and budget >= 50000:
-        closing_strategy = "Executive ROI-driven close"
-        objection_focus = "ROI and long-term value"
-    elif score >= 60 and budget >= 30000:
-        closing_strategy = "Value-based competitive close"
-        objection_focus = "Feature comparison and pricing"
-    elif score >= 50:
-        closing_strategy = "Consultative relationship-building"
-        objection_focus = "Trust and implementation support"
-    else:
-        closing_strategy = "Nurture-first soft approach"
-        objection_focus = "Education and use case alignment"
-    
-    if score >= 80:
-        discount_range = "0–5%"
-    elif score >= 60:
-        discount_range = "5–10%"
-    elif score >= 40:
-        discount_range = "10–15%"
-    else:
-        discount_range = "15–20% (nurture pricing)"
-    
-    urgency_mapping = {"Hot": "High", "Warm": "Medium", "Cold": "Low"}
-    urgency_level = urgency_mapping.get(category, "Medium")
-    
-    explanation = f"Score={score}, Budget=${budget:,}, Interest={interest}/10, Category={category}. Strategy tailored to lead profile."
-    
-    return {
-        "closing_strategy": closing_strategy,
-        "discount_range": discount_range,
-        "objection_focus": objection_focus,
-        "urgency_level": urgency_level,
-        "explanation": explanation
-    }
+        return {"error": f"Lead ID {req.lead_id} not found"}
 
-# 16. Follow-up Planner
+    urgency_level = "High" if row["score"] >= 80 else "Medium" if row["score"] >= 55 else "Low"
+    fallback = {
+        "closing_strategy": f"Use a personalized {row['deal_stage'] or 'consultative'} close focused on {row['company']}'s business priorities.",
+        "negotiation_advice": f"Anchor on ROI, tie pricing to the available budget of ${row['budget']:,}, and address implementation risk early.",
+        "recommended_next_step": "Book a decision-maker call and send a concise recap with ROI proof points.",
+    }
+    ai_data = ai_or_fallback(
+        "deal_assist",
+        {"lead_id": req.lead_id, "score": row["score"], "company": row["company"], "budget": row["budget"], "industry": row["industry"], "deal_stage": row["deal_stage"]},
+        "Return only JSON with keys: closing_strategy, negotiation_advice, recommended_next_step.",
+        f"Create a personalized closing plan for company={row['company']}, score={row['score']}, budget={row['budget']}, industry={row['industry']}, deal_stage={row['deal_stage']}, notes={row['notes']}.",
+        fallback,
+    )
+    result = {
+        "closing_strategy": ai_data["closing_strategy"],
+        "discount_range": "0-5%" if row["score"] >= 80 else "5-10%" if row["score"] >= 60 else "10-15%",
+        "objection_focus": ai_data["negotiation_advice"],
+        "negotiation_advice": ai_data["negotiation_advice"],
+        "recommended_next_step": ai_data["recommended_next_step"],
+        "urgency_level": urgency_level,
+        "explanation": f"{ai_data['recommended_next_step']} Lead profile: {row['category']} lead in {row['deal_stage'] or 'Prospecting'} with score {row['score']}/100.",
+    }
+    log_interaction(req.lead_id, "deal_assist", result)
+    return result
+
+
 @app.post("/followup/plan")
 def followup_plan(req: FollowupRequest):
-    lead_id = req.lead_id
     conn = get_db()
     cur = conn.cursor()
-    
-    cur.execute("SELECT category, score FROM leads WHERE id = ?", (lead_id,))
-    row = cur.fetchone()
+    row = cur.execute(
+        "SELECT id, company, score, category, deal_stage, industry FROM leads WHERE id = ?",
+        (req.lead_id,),
+    ).fetchone()
     conn.close()
-    
     if not row:
-        return {"error": f"Lead ID {lead_id} not found"}
-    
-    category, score = row
-    
-    if category == "Hot":
-        plan = {
-            "day 1": "Call lead immediately - high close probability",
-            "day 2": "Send detailed proposal with ROI breakdown",
-            "day 3": "Follow-up call to address questions and close"
-        }
-        note = "Hot lead sequence optimized for fast closure"
-    elif category == "Warm":
-        plan = {
-            "day 1": "Send personalized email with value proposition",
-            "day 3": "Share relevant case study",
-            "day 7": "Follow-up call to discuss next steps"
-        }
-        note = "Warm lead sequence focused on building trust"
-    else:
-        plan = {
-            "day 3": "Send educational content",
-            "day 7": "Share industry insights",
-            "day 14": "Soft check-in to gauge interest"
-        }
-        note = "Cold lead sequence for gentle nurturing"
-    
-    return {
-        "category": category,
-        "score": score,
-        "plan": plan,
-        "note": note
-    }
+        return {"error": f"Lead ID {req.lead_id} not found"}
 
-# Health check
-@app.get("/")
+    fallback = {
+        "plan": {
+            "day 1": f"Send a personalized outreach email to {row['company']} tied to their {row['industry'] or 'current'} priorities.",
+            "day 3": "Share a short demo invitation or customer proof point.",
+            "day 7": "Follow up with an ROI-focused message and a clear next step.",
+        },
+        "note": f"Sequence tailored for a {row['category']} lead in the {row['deal_stage'] or 'Prospecting'} stage.",
+    }
+    ai_data = ai_or_fallback(
+        "followup_plan",
+        {"lead_id": req.lead_id, "company": row["company"], "score": row["score"], "deal_stage": row["deal_stage"], "category": row["category"]},
+        "Return only JSON with keys: plan and note. plan must be an object with keys 'day 1', 'day 3', and 'day 7'.",
+        f"Create a follow-up sequence for company={row['company']}, score={row['score']}, category={row['category']}, deal_stage={row['deal_stage']}, industry={row['industry']}.",
+        fallback,
+    )
+    result = {
+        "category": row["category"],
+        "score": row["score"],
+        "plan": ai_data["plan"],
+        "note": ai_data["note"],
+    }
+    log_interaction(req.lead_id, "followup_plan", result)
+    return result
+
+@app.post("/chat")
+def chat_assistant(req: ChatRequest):
+    user_message = (req.message or "").strip()
+    if not user_message:
+        return {"error": "Message must not be empty."}
+
+    db_context = get_pipeline_snapshot()
+    try:
+        return generate_chat_response(
+            message=user_message,
+            db_context=db_context,
+            current_page=req.current_page or "unknown",
+            history=req.history or [],
+        )
+    except ValueError as exc:
+        return {"error": str(exc)}
+    except Exception as exc:
+        logger.error("[CHAT] Groq error (%s): %s", type(exc).__name__, exc)
+        return {"error": f"AI service temporarily unavailable ({type(exc).__name__}). Check server logs."}
+
+
+@app.get("/chat/test")
+def chat_test():
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        return {"status": "error", "reason": "GROQ_API_KEY is empty. Check your .env file."}
+    try:
+        result = generate_chat_response(
+            message="Hello, who are you?",
+            db_context=get_pipeline_snapshot(),
+            current_page="test",
+            history=[],
+        )
+        return {
+            "status": "ok",
+            "api_key_prefix": api_key[:8] + "...",
+            "model": "llama-3.3-70b-versatile",
+            "test_response": result,
+        }
+    except Exception as exc:
+        return {"status": "error", "error_type": type(exc).__name__, "error_detail": str(exc)}
+
+
+@app.get("/health")
+def health():
+    return {"status": "SalesSpark AI Backend Running", "version": "4.0"}
+
+
+@app.get("/", include_in_schema=False)
 def root():
-    return {"status": "SalesSpark AI Backend Running", "version": "3.0"}
+    return FileResponse(os.path.join(PROJECT_ROOT, "index.html"))
+
+
+@app.get("/{page_name}", include_in_schema=False)
+def serve_page(page_name: str):
+    allowed_pages = {
+        "index.html",
+        "tools.html",
+        "prediction.html",
+        "market_intelligence.html",
+        "sales_copilot.html",
+        "leads.html",
+        "favicon.ico",
+    }
+    if page_name not in allowed_pages:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if page_name == "favicon.ico":
+        return FileResponse(os.path.join(PROJECT_ROOT, "assets", "favicon.png"))
+
+    return FileResponse(os.path.join(PROJECT_ROOT, page_name))
+
+@app.get("/copilot/insights")
+def copilot_insights():
+    snapshot = get_pipeline_snapshot()
+    distribution = {
+        "hot": snapshot["hot_leads"],
+        "warm": snapshot["warm_leads"],
+        "cold": snapshot["cold_leads"],
+    }
+    fallback = {
+        "summary": f"Your pipeline contains {snapshot['hot_leads']} hot leads, {snapshot['warm_leads']} warm leads, and {snapshot['cold_leads']} cold leads with an average score of {snapshot['avg_score']}/100.",
+        "insights": [
+            f"Your pipeline currently contains {snapshot['hot_leads']} hot leads with strong purchasing potential.",
+            "Prioritize the highest scoring account first and keep warm leads moving with fast follow-up.",
+            "Use outreach and campaign tools to improve conversion across the middle of the funnel.",
+        ],
+    }
+    ai_data = ai_or_fallback(
+        "copilot_insights",
+        {"snapshot": snapshot, "distribution": distribution},
+        "Return only JSON with keys: summary and insights. insights must be an array of exactly 3 concise strings.",
+        f"Generate sales copilot insights for total leads={snapshot['total_leads']}, average score={snapshot['avg_score']}, distribution={distribution}.",
+        fallback,
+    )
+    return ai_data
+
+
+
+
+
+
+
+
+
+
