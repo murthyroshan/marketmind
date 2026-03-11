@@ -3,8 +3,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import sqlite3
 from datetime import datetime
-
 import random
+import os
+import logging
+from dotenv import load_dotenv
+
+# Load environment variables from .env (GROQ_API_KEY, etc.)
+load_dotenv()
+
+# Configure logging so [CHAT] / [ai_service] lines are visible in the terminal
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("saleskpark")
 
 # Initialize FastAPI
 app = FastAPI()
@@ -135,6 +148,9 @@ class FollowupRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    session_id: str = "default_session"
+    current_page: str = "unknown"           # page the user is on (sent by frontend)
+    history: list = []                       # last N [{role, content}] turns
 
 # ==================== PHASE 1: CORE GENERATORS ====================
 
@@ -267,103 +283,143 @@ SalesSpark AI Team
         "follow_up_tip": "If there’s no reply, send a short follow-up after 3 days referencing this email."
     }
 
-# 7. AI Chatbot
-@app.post("/chat")
-def chat_assistant(req: ChatRequest):
-    msg = req.message.lower()
-    
+# ==================== 7. AI SALES COPILOT CHATBOT (Groq-Powered) ====================
+
+try:
+    from backend.ai_service import generate_chat_response   # Run from project root
+except ImportError:
+    from ai_service import generate_chat_response            # Run from inside backend/
+
+
+# --- Helper: Fetch DB Context for the AI system prompt ---
+def get_chat_db_context() -> dict:
+    """Returns live pipeline metrics from SQLite to inject into the AI system prompt."""
     conn = get_db()
     cur = conn.cursor()
 
-    # --- INTENT 1: LEADS & SALES (CORE) ---
-    if "lead" in msg or "focus" in msg or "prioritize" in msg:
-        # "Which leads should I focus on?"
-        cur.execute("SELECT company, category, score FROM leads ORDER BY score DESC LIMIT 3")
-        leads = cur.fetchall()
-        if not leads:
-            conn.close()
-            return {"reply": "I don't see any leads yet. Use the Lead Scoring tool to generate some first."}
-        lead_list = ", ".join([f"{l[0]} ({l[1]}, {l[2]})" for l in leads])
-        reply = f"Based on urgency, prioritize: {lead_list}. These show the highest engagement right now."
-        conn.close()
-        return {"reply": reply}
+    cur.execute("SELECT COUNT(*) FROM leads")
+    total_leads = cur.fetchone()[0]
 
-    elif "hot" in msg and "lead" in msg:
-        return {"reply": "A 'Hot Lead' (Score 80-100) is ready to buy. They have high budget availability and demonstrated strong interest. Call them immediately."}
+    cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80")
+    hot_leads = cur.fetchone()[0]
 
-    elif "warm" in msg and "lead" in msg:
-        return {"reply": "A 'Warm Lead' (Score 50-79) is interested but needs nurturing. Send them a case study or a value-based email to build trust."}
+    cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 55 AND score < 80")
+    warm_leads = cur.fetchone()[0]
 
-    elif "cold" in msg:
-        if "what" in msg or "mean" in msg:
-             return {"reply": "A 'Cold Lead' (Score <50) isn't ready yet. Don't push for a sale; instead, add them to a monthly newsletter to keep your brand top-of-mind."}
-        # "Why are most of my leads cold?" / "What to do with cold leads?"
-        cur.execute("SELECT COUNT(*) FROM leads WHERE category='Cold'")
-        cold_count = cur.fetchone()[0]
-        conn.close()
-        return {"reply": f"You currently have {cold_count} cold leads. This is normal! Focus on high-volume, low-effort automation (like email drips) to warm them up over time."}
+    cur.execute("SELECT COUNT(*) FROM leads WHERE score < 55")
+    cold_leads = cur.fetchone()[0]
 
-    elif "quality" in msg:
-         return {"reply": "To improve lead quality, try narrowing your campaign targeting. High-intent leads come from specific problem-solution matching, not broad blasts."}
+    cur.execute("SELECT AVG(score) FROM leads")
+    raw_avg = cur.fetchone()[0]
+    avg_score = round(raw_avg, 1) if raw_avg else 0.0
 
-    # --- INTENT 2: CAMPAIGNS & MARKETING ---
-    elif "strategy" in msg and "campaign" in msg:
-         return {"reply": "For B2B SaaS, a 'LinkedIn Thought Leadership' strategy works best. For B2C, try 'Instagram Visual Storytelling'. Check our Campaign Generator for a full plan."}
+    cur.execute("SELECT COUNT(*) FROM campaigns")
+    total_campaigns = cur.fetchone()[0]
 
-    elif "platform" in msg:
-         return {"reply": "If you're selling high-ticket items ($10k+), prioritize LinkedIn. For volume sales or e-commerce, Instagram and Twitter/X drive better cost-per-click."}
-
-    elif "conversion" in msg:
-         return {"reply": "Low conversions often mean your offer isn't matching the audience's pain point. Try A/B testing your Call to Action (CTA) or refining your value proposition."}
-
-    elif "brand" in msg or "sales" in msg:
-         return {"reply": "If your pipeline is empty, focus on Sales (outbound). If you have leads but low trust, focus on Brand Awareness (content)."}
-
-    # --- INTENT 3: MARKET & STRATEGY ---
-    elif "trend" in msg or "market" in msg:
-         return {"reply": "Current market trends favor 'Hyper-Personalization'. Generic outreach is dead; buyers expect you to know their specific pain points before you reach out."}
-
-    elif "time" in msg and "scale" in msg:
-         return {"reply": "Scale only when you have a predictable channel. If you can put $1 in and get $3 out consistently, it's time to scale!"}
-
-    elif "region" in msg or "industry" in msg:
-         return {"reply": "The Tech and Healthcare sectors are showing resilience. North American markets remain the strongest for SaaS adoption right now."}
-
-    # --- INTENT 4: SALES ACTIONS ---
-    elif "next" in msg or "action" in msg:
-         return {"reply": "Check the 'Sales Copilot' page for your prioritized daily actions. Usually, your best next move is to call your highest-scoring Hot Lead."}
-
-    elif "risk" in msg:
-         cur.execute("SELECT COUNT(*) FROM leads WHERE category='Hot'")
-         hot_count = cur.fetchone()[0]
-         conn.close()
-         if hot_count == 0:
-             return {"reply": "⚠️ RISK ALERT: You have 0 Hot leads. Your pipeline is stalling. Verify your campaigns immediately to refill the top of the funnel."}
-         return {"reply": "Your main risk is lead staleness. Ensure no Hot lead waits more than 24 hours for a follow-up."}
-
-    elif "pipeline" in msg or "health" in msg:
-         cur.execute("SELECT category, COUNT(*) FROM leads GROUP BY category")
-         stats = dict(cur.fetchall())
-         conn.close()
-         summary = f"Pipeline Health: {stats.get('Hot', 0)} Hot, {stats.get('Warm', 0)} Warm, {stats.get('Cold', 0)} Cold."
-         return {"reply": f"{summary} A healthy pipeline should look like a funnel (more Cold than Warm, more Warm than Hot)."}
-
-    elif "close" in msg or "deal" in msg:
-         return {"reply": "To close deals faster, use the 'Deal Tools' page. Generous time-limited discounts or offering a 'Pilot Program' are great ways to reduce friction."}
-
-    # --- INTENT 5: GENERAL / EDUCATIONAL ---
-    elif "help" in msg:
-         return {"reply": "I'm your SalesSpark Assistant. I can analyze your leads, suggest campaign strategies, explain sales concepts, or spot risks in your pipeline."}
-
-    elif "work" in msg or "system" in msg:
-         return {"reply": "I run on a deterministic AI engine connected to your local database. I analyze your leads and campaigns in real-time to give specific, safe, and data-backed advice."}
+    # Top 5 leads (company name, category, score, budget)
+    cur.execute(
+        "SELECT id, company, category, score, budget FROM leads ORDER BY score DESC LIMIT 5"
+    )
+    top_leads = [
+        {"id": r[0], "company": r[1], "category": r[2], "score": r[3], "budget": r[4]}
+        for r in cur.fetchall()
+    ]
 
     conn.close()
-    
-    # Fallback
-    return {"reply": "I can help with leads, campaigns, sales strategy, and market insights. Try asking 'Which leads should I focus on?' or 'What is a hot lead?'"}
 
-# ... (Existing Request Models)
+    if total_leads == 0:
+        health = "Empty — no leads yet"
+    elif hot_leads >= 3 and avg_score > 50:
+        health = "Healthy"
+    elif hot_leads == 0:
+        health = "At Risk — zero Hot leads"
+    else:
+        health = "Needs Nurturing"
+
+    return {
+        "total_leads": total_leads,
+        "hot_leads": hot_leads,
+        "warm_leads": warm_leads,
+        "cold_leads": cold_leads,
+        "avg_score": avg_score,
+        "total_campaigns": total_campaigns,
+        "pipeline_health": health,
+        "top_leads": top_leads,
+    }
+
+
+# --- Chat Endpoint ---
+@app.post("/chat")
+def chat_assistant(req: ChatRequest):
+    """
+    Workflow: validate → fetch DB context → Groq AI → return structured response.
+    Success:  { "response": str }  — may also include { "action", "page", "url" } for navigation.
+    Failure:  { "error": str }
+    """
+    user_message = (req.message or "").strip()
+    if not user_message:
+        return {"error": "Message must not be empty."}
+
+    db_context = get_chat_db_context()
+
+    try:
+        result = generate_chat_response(
+            message=user_message,
+            db_context=db_context,
+            current_page=req.current_page or "unknown",
+            history=req.history or [],
+        )
+        logger.info("[CHAT] Response type: %s", result.get("action", "text"))
+        return result
+
+    except ValueError as ve:
+        logger.error("[CHAT] Validation error: %s", ve)
+        return {"error": str(ve)}
+
+    except Exception as e:
+        logger.error("[CHAT] Groq error (%s): %s", type(e).__name__, e)
+        return {"error": f"AI service temporarily unavailable ({type(e).__name__}). Check server logs."}
+
+
+# ─── Debug / Health Endpoint ──────────────────────────────────────────────────
+@app.get("/chat/test")
+def chat_test():
+    """
+    Quick smoke-test endpoint. Open in browser:  http://127.0.0.1:8000/chat/test
+    Returns a live Groq response for 'Hello, who are you?' or a detailed error.
+    """
+    logger.info("[CHAT/TEST] Smoke test triggered.")
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+
+    if not api_key:
+        return {
+            "status": "error",
+            "reason": "GROQ_API_KEY is empty. Check your .env file."
+        }
+
+    db_context = get_chat_db_context()
+    try:
+        result = generate_chat_response(
+            message="Hello, who are you?",
+            db_context=db_context,
+            current_page="test",
+            history=[],
+        )
+        logger.info("[CHAT/TEST] Smoke test passed.")
+        return {
+            "status": "ok",
+            "api_key_prefix": api_key[:8] + "...",
+            "model": "llama-3.3-70b-versatile",
+            "test_response": result,
+        }
+    except Exception as e:
+        logger.error("[CHAT/TEST] Smoke test FAILED (%s): %s", type(e).__name__, e)
+        return {
+            "status": "error",
+            "error_type": type(e).__name__,
+            "error_detail": str(e),
+        }
+
 
 class MarketAnalysisRequest(BaseModel):
     industry: str
