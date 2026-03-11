@@ -5,11 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Leads & Deal Tools | SalesSpark AI</title>
-    <meta name="description" content="Manage leads, view scores, and access AI-powered deal closing tools — all in one place.">
+    <meta name="description" content="Manage leads, view scores, and access AI-powered deal closing tools all in one place.">
     <link rel="icon" type="image/png" href="./assets/favicon.png">
     <link rel="stylesheet" href="css/style.css">
     <style>
-        /* ── Deal Tools section separator ─────────────────────────────────────── */
         .section-divider {
             display: flex;
             align-items: center;
@@ -34,10 +33,20 @@
             white-space: nowrap;
         }
 
-        /* ── Deal Tools card accent ───────────────────────────────────────────── */
         .deal-tools-card {
             background: linear-gradient(135deg, rgba(102, 126, 234, 0.08), rgba(118, 75, 162, 0.04));
             border: 1px solid rgba(102, 126, 234, 0.2);
+        }
+
+        #lead-selector {
+            background: var(--bg-card);
+            color: var(--text-main);
+            border: 2px solid var(--primary);
+        }
+
+        #lead-selector option {
+            background: #0f172a;
+            color: var(--text-main);
         }
     </style>
 </head>
@@ -58,88 +67,76 @@
         </div>
     </nav>
 
-    <!-- ── Section 1: Page Header ──────────────────────────────────────────── -->
     <section class="container" style="padding: 20px;">
-        <h1 class="page-title">🧩 Lead Intelligence &amp; Actions</h1>
+        <h1 class="page-title">Lead Intelligence &amp; Actions</h1>
         <p class="page-subtitle">Analyze, prioritize, and act on high-intent leads</p>
     </section>
 
-    <!-- ── Section 2: Active Leads ─────────────────────────────────────────── -->
     <section class="container" style="padding: 0 20px 20px;">
         <div class="card">
-            <h3>🗂️ Active Leads</h3>
-            <p style="color: var(--text-muted); margin-bottom: 20px;">Below is the live data used by the Sales Copilot.
-            </p>
+            <h3>Active Leads</h3>
+            <p style="color: var(--text-muted); margin-bottom: 20px;">Below is the live data used by the Sales Copilot.</p>
 
-            <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
+            <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px;">
                 <thead>
                     <tr style="border-bottom: 2px solid rgba(255,255,255,0.1); text-align: left;">
                         <th style="padding: 12px; color: var(--text-muted);">Lead ID</th>
-                        <th style="padding: 12px; color: var(--text-muted);">Category</th>
-                        <th style="padding: 12px; color: var(--text-muted);">Score</th>
                         <th style="padding: 12px; color: var(--text-muted);">Company</th>
+                        <th style="padding: 12px; color: var(--text-muted);">Budget</th>
+                        <th style="padding: 12px; color: var(--text-muted);">Interest</th>
+                        <th style="padding: 12px; color: var(--text-muted);">Score</th>
+                        <th style="padding: 12px; color: var(--text-muted);">Category</th>
+                        <th style="padding: 12px; color: var(--text-muted);">Industry</th>
+                        <th style="padding: 12px; color: var(--text-muted);">Region</th>
                     </tr>
                 </thead>
                 <tbody id="leads-table-body">
                     <tr>
-                        <td colspan="4" style="padding: 20px; text-align: center; color: var(--text-muted);">Loading
-                            leads...</td>
+                        <td colspan="8" style="padding: 20px; text-align: center; color: var(--text-muted);">Loading leads...</td>
                     </tr>
                 </tbody>
             </table>
         </div>
     </section>
 
-    <!-- ── Section 3: Deal Tools ────────────────────────────────────────────── -->
     <section class="container" id="deal-tools" style="padding: 0 20px 60px;">
-
         <div class="section-divider">
-            <span class="section-divider-label">🛠️ Deal Closing Assistant</span>
+            <span class="section-divider-label">Deal Closing Assistant</span>
         </div>
 
-        <!-- Lead Selector -->
         <div class="card deal-tools-card" style="margin-bottom: 30px;">
-            <h3>📋 Select Lead for Deal Analysis</h3>
-            <select id="lead-selector"
-                style="width: 100%; padding: 12px; font-size: 16px; border-radius: 8px; border: 2px solid var(--primary); background: var(--card); color: var(--text); margin-top: 10px;">
+            <h3>Select Lead for Deal Analysis</h3>
+            <select id="lead-selector" style="width: 100%; padding: 12px; font-size: 16px; border-radius: 8px; margin-top: 10px;">
                 <option value="">-- Select a Lead --</option>
             </select>
             <p id="lead-selector-status" style="margin-top: 10px; font-size: 14px; color: var(--text-muted);"></p>
         </div>
 
-        <!-- Deal Closure + Follow-up side by side -->
         <div class="grid">
-
-            <!-- Deal Closure Assistant -->
             <div class="card">
-                <h3>🤝 Deal Closure Assistant</h3>
-                <p style="color: var(--text-muted); margin-bottom: 20px;">Get AI-powered closing strategy for the
-                    selected lead</p>
+                <h3>Deal Closure Assistant</h3>
+                <p style="color: var(--text-muted); margin-bottom: 20px;">Get AI-powered closing strategy for the selected lead</p>
                 <button class="tool-btn" id="deal-btn" onclick="getDealStrategy()" disabled>Get Strategy</button>
                 <div id="deal_output" class="output"></div>
             </div>
 
-            <!-- Follow-up Planner -->
             <div class="card">
-                <h3>📅 Follow-up Planner</h3>
-                <p style="color: var(--text-muted); margin-bottom: 20px;">Generate a time-sequenced follow-up plan for
-                    the selected lead</p>
+                <h3>Follow-up Planner</h3>
+                <p style="color: var(--text-muted); margin-bottom: 20px;">Generate a time-sequenced follow-up plan for the selected lead</p>
                 <button class="tool-btn" id="followup-btn" onclick="getFollowupPlan()" disabled>Generate Plan</button>
                 <div id="followup_output" class="output"></div>
             </div>
-
         </div>
     </section>
 
     <footer>
-        <p>© 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
+        <p>� 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
     </footer>
 
     <script src="js/app.js"></script>
     <script src="js/generators.js"></script>
     <script src="js/deal_tools.js"></script>
     <script>
-        // ── Lead table loader ────────────────────────────────────────────────────
         document.addEventListener('DOMContentLoaded', async () => {
             try {
                 const res = await fetch('http://127.0.0.1:8000/leads');
@@ -147,7 +144,7 @@
                 const tbody = document.getElementById('leads-table-body');
 
                 if (!data.leads || data.leads.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="4" style="padding: 20px; text-align: center;">No leads found.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="8" style="padding: 20px; text-align: center;">No leads found.</td></tr>';
                     return;
                 }
 
@@ -159,16 +156,18 @@
                     return `
                         <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
                             <td style="padding: 15px; font-weight: 700;">#${lead.id}</td>
-                            <td style="padding: 15px;"><span style="color: ${color}; font-weight: 600; background: ${color}15; padding: 4px 10px; border-radius: 4px;">${lead.category}</span></td>
+                            <td style="padding: 15px; color: var(--text-main);">${lead.company || 'N/A'}</td>
+                            <td style="padding: 15px; color: var(--text-muted);">${lead.budget ? `$${Number(lead.budget).toLocaleString()}` : 'N/A'}</td>
+                            <td style="padding: 15px; color: var(--text-muted);">${lead.interest ?? 'N/A'}/10</td>
                             <td style="padding: 15px; font-weight: 700;">${lead.score}/100</td>
-                            <td style="padding: 15px; color: var(--text-muted);">${lead.company || 'N/A'}</td>
+                            <td style="padding: 15px;"><span style="color: ${color}; font-weight: 600; background: ${color}15; padding: 4px 10px; border-radius: 4px;">${lead.category}</span></td>
+                            <td style="padding: 15px; color: var(--text-muted);">${lead.industry || 'N/A'}</td>
+                            <td style="padding: 15px; color: var(--text-muted);">${lead.region || 'N/A'}</td>
                         </tr>
                     `;
                 }).join('');
-
             } catch (e) {
-                console.error(e);
-                document.getElementById('leads-table-body').innerHTML = '<tr><td colspan="4" style="color: #f87171; padding: 20px; text-align: center;">Error loading leads.</td></tr>';
+                document.getElementById('leads-table-body').innerHTML = '<tr><td colspan="8" style="color: #f87171; padding: 20px; text-align: center;">Error loading leads.</td></tr>';
             }
         });
     </script>

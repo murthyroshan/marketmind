@@ -800,3 +800,19 @@ footer {
         /* Status bar space */
     }
 }
+:root {
+    --card: var(--bg-card);
+    --text: var(--text-main);
+    --error: #f87171;
+}
+
+select,
+select option {
+    background-color: #0f172a;
+    color: var(--text-main);
+}
+
+select:hover,
+select:focus {
+    background-color: #111c34;
+}
