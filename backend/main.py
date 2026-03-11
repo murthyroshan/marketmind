@@ -1165,6 +1165,7 @@ def followup_plan(req: FollowupRequest):
     return result
 
 NAVIGATION_PATTERNS = [
+    (re.compile(r"\b(open|show|go\s*to|take\s*me\s*to|back\s*to)\s+(home|landing|landing\s+page|index)\b", re.IGNORECASE), "home"),
     (re.compile(r"\b(open|show|go to|take me to)\s+(sales\s+)?copilot\b", re.IGNORECASE), "sales_copilot"),
     (re.compile(r"\b(open|show|go to|take me to)\s+(my\s+)?leads?\b", re.IGNORECASE), "leads"),
     (re.compile(r"\b(open|show|go to|take me to)\s+(tools?|campaign generator)\b", re.IGNORECASE), "tools"),
@@ -1173,6 +1174,7 @@ NAVIGATION_PATTERNS = [
 ]
 
 NAVIGATION_URLS = {
+    "home": "index.html",
     "sales_copilot": "sales_copilot.html",
     "leads": "leads.html",
     "tools": "tools.html",
@@ -1185,8 +1187,12 @@ def _normalize_page(page: str) -> str:
     page = (page or "").strip().lower()
     if page == "copilot":
         return "sales_copilot"
-    if page == "campaigns":
+    if page == "dashboard":
+        return "sales_copilot"
+    if page in {"campaigns", "campaign"}:
         return "tools"
+    if page in {"home", "landing", "index", "index.html"}:
+        return "home"
     return page
 
 
@@ -1421,12 +1427,17 @@ def chat_assistant(req: ChatRequest):
         if ai_result.get("action") == "navigate":
             page = (ai_result.get("page") or "").lower()
             mapping = {
+                "home": "home",
+                "landing": "home",
+                "index": "home",
+                "index.html": "home",
                 "copilot": "sales_copilot",
                 "campaigns": "tools",
                 "market": "market",
                 "prediction": "prediction",
                 "leads": "leads",
                 "tools": "tools",
+                "dashboard": "sales_copilot",
             }
             normalized_page = mapping.get(page, page)
             if normalized_page in NAVIGATION_URLS:
@@ -1523,6 +1534,7 @@ def copilot_insights():
         fallback,
     )
     return ai_data
+
 
 
 

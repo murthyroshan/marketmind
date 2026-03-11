@@ -70,6 +70,7 @@ function addToHistory(role, content) {
 
 // ── Navigation action handler ──────────────────────────────────────────────────
 const PAGE_URLS = {
+    'home': 'index.html',
     'sales_copilot': 'sales_copilot.html',
     'leads': 'leads.html',
     'tools': 'tools.html',
@@ -79,6 +80,7 @@ const PAGE_URLS = {
 
 // Page display names for a friendlier UX message
 const PAGE_LABELS = {
+    'home': 'Home',
     'sales_copilot': 'Sales Copilot',
     'leads': 'Leads',
     'tools': 'Tools',
@@ -146,6 +148,7 @@ const INSTANT_PRODUCT =
 // ── Client-side navigation intent detection (instant, no API call) ────────────
 // Maps each page key to a regex that matches common navigation phrasings.
 const NAVIGATION_INTENTS = {
+    'home': /\b(open|show|go\s*to|take\s*me\s*to|back\s*to)\s*(home|landing|landing\s*page|index)\b/i,
     'sales_copilot': /\b(open|show|go\s*to|take\s*me\s*to)\s*(sales\s*)?copilot\b/i,
     'leads': /\b(open|show|go\s*to|take\s*me\s*to|view|see)\s*(my\s*)?leads?\b/i,
     'tools': /\b(open|show|go\s*to|take\s*me\s*to)\s*(tools?|campaign\s*generator)\b/i,
@@ -484,6 +487,7 @@ function removeTyping(id) {
     const el = document.getElementById(id);
     if (el) el.remove();
 }
+
 
 
 

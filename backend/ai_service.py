@@ -44,8 +44,14 @@ else:
 
 # ── Page → URL map (used in navigation responses) ─────────────────────────────
 PAGE_URL_MAP: Dict[str, str] = {
+    "home":        "/index.html",
+    "landing":     "/index.html",
+    "index":       "/index.html",
     "dashboard":   "/sales_copilot.html",
+    "copilot":     "/sales_copilot.html",
+    "sales_copilot":"/sales_copilot.html",
     "leads":       "/leads.html",
+    "tools":       "/tools.html",
     "campaigns":   "/tools.html",
     "pitch":       "/tools.html",
     "email":       "/tools.html",
@@ -53,7 +59,6 @@ PAGE_URL_MAP: Dict[str, str] = {
     "market":      "/market_intelligence.html",
     "prediction":  "/prediction.html",
     "deal-tools":  "/leads.html#deal-tools",
-    "copilot":     "/sales_copilot.html",
 }
 
 # ── Greeting intent detection (zero-token shortcut) ───────────────────────────
@@ -316,3 +321,5 @@ def generate_chat_response(
     logger.info("[ai_service] Groq reply (%d chars): %s...", len(raw_reply), raw_reply[:80])
 
     return _parse_navigation(raw_reply)
+
+
