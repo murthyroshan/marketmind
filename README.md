@@ -266,7 +266,7 @@ TeamXspark/
 ### 1. Clone the repository
 
 ```bash
-git clone <your-repository-url>
+git clone https://github.com/murthyroshan/marketmind TeamXspark
 cd TeamXspark
 ```
 
@@ -359,3 +359,7 @@ Possible upgrades:
 ## License
 
 This project is for educational and experimental purposes.
+
+
+
+
