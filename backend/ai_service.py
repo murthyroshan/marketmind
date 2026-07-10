@@ -317,7 +317,8 @@ def generate_chat_response(
         stream=False,
     )
 
-    raw_reply = completion.choices[0].message.content.strip()
+    choices = completion.choices or []
+    raw_reply = ((choices[0].message.content if choices else "") or "").strip()
     logger.info("[ai_service] Groq reply (%d chars): %s...", len(raw_reply), raw_reply[:80])
 
     return _parse_navigation(raw_reply)

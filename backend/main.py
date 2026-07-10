@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 import hashlib
 import json
 import logging
+from contextlib import contextmanager
 import os
 import random
 import re
@@ -40,9 +41,16 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 DB_PATH = os.path.join(PROJECT_ROOT, "backend", "sales.db")
 
 app = FastAPI()
+
+# Explicit local dev origins. Wildcard "*" is invalid when credentials are
+# allowed (browsers reject it) and would expose authenticated cross-origin calls.
+ALLOWED_ORIGINS = [o.strip() for o in os.getenv(
+    "CORS_ORIGINS",
+    "http://localhost:8000,http://127.0.0.1:8000",
+).split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -65,8 +73,8 @@ class PitchRequest(BaseModel):
 
 
 class ScoreRequest(BaseModel):
-    company: str
-    budget: int
+    company: str = Field(min_length=1)
+    budget: int = Field(ge=0)
     interest: int = Field(ge=1, le=10)
     industry: Optional[str] = None
     region: Optional[str] = None
@@ -122,6 +130,16 @@ def get_db() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+@contextmanager
+def db_conn():
+    """Yield a DB connection and guarantee it is closed, even on exception."""
+    conn = get_db()
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def ensure_column(cur: sqlite3.Cursor, table: str, column: str, definition: str) -> None:
@@ -257,7 +275,10 @@ def init_db() -> None:
     conn.close()
 
 
-init_db()
+try:
+    init_db()
+except Exception as exc:  # startup diagnostics: degrade instead of failing import
+    logger.error("[startup] init_db() failed: %s", exc)
 
 
 INDUSTRY_BASELINES = {
@@ -276,6 +297,17 @@ REGION_MULTIPLIERS = {
     "EU": {"demand": 1.08, "competition": 1.12},
     "APAC": {"demand": 1.25, "competition": 1.05},
 }
+
+def _lookup_ci(table: Dict[str, Any], key: str, default: Any) -> Any:
+    """Case-insensitive dict lookup so 'apac'/'north america' match their keys."""
+    if key in table:
+        return table[key]
+    lowered = key.strip().lower()
+    for k, v in table.items():
+        if k.lower() == lowered:
+            return v
+    return default
+
 
 TIME_MULTIPLIERS = {
     "Short": {"demand": 0.9, "opportunity": 0.82},
@@ -331,13 +363,12 @@ def make_hash(payload: Dict[str, Any]) -> str:
 
 
 def get_cached_output(feature: str, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    conn = get_db()
-    cur = conn.cursor()
-    row = cur.execute(
-        "SELECT output FROM ai_outputs WHERE feature = ? AND input_hash = ?",
-        (feature, make_hash(payload)),
-    ).fetchone()
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        row = cur.execute(
+            "SELECT output FROM ai_outputs WHERE feature = ? AND input_hash = ?",
+            (feature, make_hash(payload)),
+        ).fetchone()
     if not row:
         return None
     try:
@@ -347,24 +378,25 @@ def get_cached_output(feature: str, payload: Dict[str, Any]) -> Optional[Dict[st
 
 
 def save_cached_output(feature: str, payload: Dict[str, Any], data: Dict[str, Any]) -> None:
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO ai_outputs (feature, input_hash, output)
-        VALUES (?, ?, ?)
-        ON CONFLICT(feature, input_hash) DO UPDATE SET output = excluded.output, created_at = CURRENT_TIMESTAMP
-        """,
-        (feature, make_hash(payload), json.dumps(data)),
-    )
-    conn.commit()
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO ai_outputs (feature, input_hash, output)
+            VALUES (?, ?, ?)
+            ON CONFLICT(feature, input_hash) DO UPDATE SET output = excluded.output, created_at = CURRENT_TIMESTAMP
+            """,
+            (feature, make_hash(payload), json.dumps(data)),
+        )
+        conn.commit()
 
 
 def ai_or_fallback(feature: str, payload: Dict[str, Any], system_prompt: str, user_prompt: str, fallback: Dict[str, Any]) -> Dict[str, Any]:
     cached = get_cached_output(feature, payload)
     if cached:
-        return cached
+        # Merge over the current fallback so a cache row written under an older
+        # schema can't cause a KeyError when a new key is accessed downstream.
+        return {**fallback, **cached}
     result = generate_json(
         feature=feature,
         system_prompt=system_prompt,
@@ -376,19 +408,18 @@ def ai_or_fallback(feature: str, payload: Dict[str, Any], system_prompt: str, us
 
 
 def get_pipeline_snapshot() -> Dict[str, Any]:
-    conn = get_db()
-    cur = conn.cursor()
-    total_leads = cur.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
-    hot_leads = cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0]
-    warm_leads = cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 55 AND score < 80").fetchone()[0]
-    cold_leads = cur.execute("SELECT COUNT(*) FROM leads WHERE score < 55").fetchone()[0]
-    avg_raw = cur.execute("SELECT AVG(score) FROM leads").fetchone()[0]
-    avg_score = round(avg_raw, 1) if avg_raw is not None else 0.0
-    total_campaigns = cur.execute("SELECT COUNT(*) FROM campaigns").fetchone()[0]
-    top_rows = cur.execute(
-        "SELECT id, company, category, score, budget FROM leads ORDER BY score DESC, created_at DESC LIMIT 5"
-    ).fetchall()
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        total_leads = cur.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+        hot_leads = cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0]
+        warm_leads = cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 55 AND score < 80").fetchone()[0]
+        cold_leads = cur.execute("SELECT COUNT(*) FROM leads WHERE score < 55").fetchone()[0]
+        avg_raw = cur.execute("SELECT AVG(score) FROM leads").fetchone()[0]
+        avg_score = round(avg_raw, 1) if avg_raw is not None else 0.0
+        total_campaigns = cur.execute("SELECT COUNT(*) FROM campaigns").fetchone()[0]
+        top_rows = cur.execute(
+            "SELECT id, company, category, score, budget FROM leads ORDER BY score DESC, created_at DESC LIMIT 5"
+        ).fetchall()
 
     if total_leads == 0:
         health = "Empty"
@@ -412,12 +443,11 @@ def get_pipeline_snapshot() -> Dict[str, Any]:
 
 
 def get_market_context() -> Dict[str, Any]:
-    conn = get_db()
-    cur = conn.cursor()
-    industries = [row[0] for row in cur.execute("SELECT DISTINCT industry FROM leads WHERE industry IS NOT NULL AND TRIM(industry) != '' ORDER BY industry").fetchall()]
-    regions = [row[0] for row in cur.execute("SELECT DISTINCT region FROM leads WHERE region IS NOT NULL AND TRIM(region) != '' ORDER BY region").fetchall()]
-    products = [row[0] for row in cur.execute("SELECT DISTINCT product FROM campaigns WHERE product IS NOT NULL AND TRIM(product) != '' ORDER BY product").fetchall()]
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        industries = [row[0] for row in cur.execute("SELECT DISTINCT industry FROM leads WHERE industry IS NOT NULL AND TRIM(industry) != '' ORDER BY industry").fetchall()]
+        regions = [row[0] for row in cur.execute("SELECT DISTINCT region FROM leads WHERE region IS NOT NULL AND TRIM(region) != '' ORDER BY region").fetchall()]
+        products = [row[0] for row in cur.execute("SELECT DISTINCT product FROM campaigns WHERE product IS NOT NULL AND TRIM(product) != '' ORDER BY product").fetchall()]
     return {
         "industries": industries,
         "regions": regions,
@@ -468,12 +498,14 @@ def try_market_search(industry: str, region: str, product: str = "") -> str:
 
 def build_demand_trend(demand_score: int, horizon: str, avg_score: float) -> List[int]:
     seed = int(demand_score + avg_score)
-    random.seed(seed)
+    # Use a local RNG instance: sync handlers run in a threadpool, so seeding the
+    # process-global random would let concurrent requests corrupt each other's output.
+    rng = random.Random(seed)
     values = []
     start = max(30, demand_score - 10)
     growth = 3 if horizon == "Short" else 5 if horizon == "Mid" else 7
     for idx in range(6):
-        noise = random.randint(-4, 4)
+        noise = rng.randint(-4, 4)
         values.append(max(0, min(100, start + idx * growth + noise)))
     return values
 
@@ -546,24 +578,23 @@ def generate_campaign(req: CampaignRequest):
     objective = f"Launch a {payload['platform']} campaign for {payload['product']} focused on {payload['goal'].lower()}."
     outcome = ai_data["expected_outcome"]
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO campaigns (
-            product, audience, platform, goal, objective, theme,
-            marketing_strategy, messaging_approach, cta, expected_outcome,
-            outcome, ai_insight, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            payload["product"], payload["audience"], payload["platform"], payload["goal"], objective,
-            ai_data["theme"], ai_data["marketing_strategy"], ai_data["messaging_approach"], ai_data["cta"],
-            ai_data["expected_outcome"], outcome, ai_data["ai_insight"], datetime.utcnow().isoformat(),
-        ),
-    )
-    conn.commit()
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO campaigns (
+                product, audience, platform, goal, objective, theme,
+                marketing_strategy, messaging_approach, cta, expected_outcome,
+                outcome, ai_insight, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                payload["product"], payload["audience"], payload["platform"], payload["goal"], objective,
+                ai_data["theme"], ai_data["marketing_strategy"], ai_data["messaging_approach"], ai_data["cta"],
+                ai_data["expected_outcome"], outcome, ai_data["ai_insight"], datetime.utcnow().isoformat(),
+            ),
+        )
+        conn.commit()
 
     return {
         "objective": objective,
@@ -634,23 +665,22 @@ def score_lead(req: ScoreRequest):
         fallback,
     )
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO leads (
-            company, budget, interest, score, category, industry, region,
-            contact_name, contact_email, deal_stage, last_contacted, notes, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            req.company.strip(), req.budget, req.interest, score, category, req.industry, req.region,
-            req.contact_name, req.contact_email, req.deal_stage, datetime.utcnow().isoformat(), req.notes,
-            datetime.utcnow().isoformat(),
-        ),
-    )
-    conn.commit()
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO leads (
+                company, budget, interest, score, category, industry, region,
+                contact_name, contact_email, deal_stage, last_contacted, notes, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                req.company.strip(), req.budget, req.interest, score, category, req.industry, req.region,
+                req.contact_name, req.contact_email, req.deal_stage, datetime.utcnow().isoformat(), req.notes,
+                datetime.utcnow().isoformat(),
+            ),
+        )
+        conn.commit()
 
     return {
         "score": score,
@@ -662,17 +692,16 @@ def score_lead(req: ScoreRequest):
 
 @app.get("/leads")
 def get_all_leads():
-    conn = get_db()
-    cur = conn.cursor()
-    rows = cur.execute(
-        """
-        SELECT id, company, budget, interest, score, category, industry, region,
-               contact_name, contact_email, deal_stage, last_contacted, notes, created_at
-        FROM leads
-        ORDER BY score DESC, created_at DESC
-        """
-    ).fetchall()
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        rows = cur.execute(
+            """
+            SELECT id, company, budget, interest, score, category, industry, region,
+                   contact_name, contact_email, deal_stage, last_contacted, notes, created_at
+            FROM leads
+            ORDER BY score DESC, created_at DESC
+            """
+        ).fetchall()
     return {"leads": serialize_rows(rows)}
 
 
@@ -763,15 +792,14 @@ def generate_email(req: EmailRequest):
 
 @app.post("/predict/campaign")
 def predict_campaign(req: PredictionRequest):
-    conn = get_db()
-    cur = conn.cursor()
-    total_leads = cur.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
-    avg_raw = cur.execute("SELECT AVG(score) FROM leads").fetchone()[0]
-    avg_score = round(avg_raw, 1) if avg_raw is not None else 0.0
-    hot_leads = cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0]
-    platform_campaigns = cur.execute("SELECT COUNT(*) FROM campaigns WHERE platform = ?", (req.platform,)).fetchone()[0]
-    goal_campaigns = cur.execute("SELECT COUNT(*) FROM campaigns WHERE goal = ?", (req.goal,)).fetchone()[0]
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        total_leads = cur.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+        avg_raw = cur.execute("SELECT AVG(score) FROM leads").fetchone()[0]
+        avg_score = round(avg_raw, 1) if avg_raw is not None else 0.0
+        hot_leads = cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0]
+        platform_campaigns = cur.execute("SELECT COUNT(*) FROM campaigns WHERE platform = ?", (req.platform,)).fetchone()[0]
+        goal_campaigns = cur.execute("SELECT COUNT(*) FROM campaigns WHERE goal = ?", (req.goal,)).fetchone()[0]
 
     engagement_score = 40 + (avg_score * 0.6)
     engagement_prob = int(max(0, min(100, round(engagement_score))))
@@ -838,8 +866,8 @@ def market_intelligence_analysis(req: MarketAnalysisRequest):
     db_context = get_market_context()
     snapshot = get_pipeline_snapshot()
     baseline = INDUSTRY_BASELINES.get(industry.lower(), INDUSTRY_BASELINES["saas"])
-    region_mult = REGION_MULTIPLIERS.get(region, REGION_MULTIPLIERS["Global"])
-    time_mult = TIME_MULTIPLIERS.get(horizon, TIME_MULTIPLIERS["Mid"])
+    region_mult = _lookup_ci(REGION_MULTIPLIERS, region, REGION_MULTIPLIERS["Global"])
+    time_mult = _lookup_ci(TIME_MULTIPLIERS, horizon, TIME_MULTIPLIERS["Mid"])
 
     demand_score = int(max(0, min(100, round(baseline["demand"] * region_mult["demand"] * time_mult["demand"]))))
     competition_score = int(max(0, min(100, round(baseline["competition"] * region_mult["competition"]))))
@@ -907,12 +935,11 @@ def market_intelligence_analysis(req: MarketAnalysisRequest):
 @app.get("/dashboard")
 def dashboard():
     snapshot = get_pipeline_snapshot()
-    conn = get_db()
-    cur = conn.cursor()
-    best_platform_row = cur.execute(
-        "SELECT platform, COUNT(*) AS cnt FROM campaigns GROUP BY platform ORDER BY cnt DESC, platform ASC LIMIT 1"
-    ).fetchone()
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        best_platform_row = cur.execute(
+            "SELECT platform, COUNT(*) AS cnt FROM campaigns GROUP BY platform ORDER BY cnt DESC, platform ASC LIMIT 1"
+        ).fetchone()
     metrics = {
         "total_leads": snapshot["total_leads"],
         "hot_leads": snapshot["hot_leads"],
@@ -943,15 +970,14 @@ def recommendations():
 
 @app.get("/segments")
 def segments():
-    conn = get_db()
-    cur = conn.cursor()
-    result = {
-        "high_value": cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0],
-        "high_intent": cur.execute("SELECT COUNT(*) FROM leads WHERE interest >= 8").fetchone()[0],
-        "price_sensitive": cur.execute("SELECT COUNT(*) FROM leads WHERE budget < 20000").fetchone()[0],
-        "low_intent": cur.execute("SELECT COUNT(*) FROM leads WHERE score < 40").fetchone()[0],
-    }
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        result = {
+            "high_value": cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0],
+            "high_intent": cur.execute("SELECT COUNT(*) FROM leads WHERE interest >= 8").fetchone()[0],
+            "price_sensitive": cur.execute("SELECT COUNT(*) FROM leads WHERE budget < 20000").fetchone()[0],
+            "low_intent": cur.execute("SELECT COUNT(*) FROM leads WHERE score < 40").fetchone()[0],
+        }
     return result
 
 
@@ -971,17 +997,16 @@ def weekly_report():
 
 @app.get("/actions/next")
 def next_actions():
-    conn = get_db()
-    cur = conn.cursor()
-    rows = cur.execute(
-        """
-        SELECT id, company, score, interest, category, deal_stage, last_contacted
-        FROM leads
-        ORDER BY score DESC, interest DESC, created_at DESC
-        LIMIT 5
-        """
-    ).fetchall()
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        rows = cur.execute(
+            """
+            SELECT id, company, score, interest, category, deal_stage, last_contacted
+            FROM leads
+            ORDER BY score DESC, interest DESC, created_at DESC
+            LIMIT 5
+            """
+        ).fetchall()
     if not rows:
         return {"actions": [], "message": "No leads available. Generate leads to see prioritized actions."}
 
@@ -1013,25 +1038,23 @@ def next_actions():
 
 @app.get("/trends/sales")
 def sales_trends():
-    conn = get_db()
-    cur = conn.cursor()
-    total_leads = cur.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
-    if total_leads < 4:
-        conn.close()
-        return {
-            "trend": "insufficient",
-            "trend_direction": "Insufficient data - add more leads",
-            "risk_flags": [],
-            "opportunity_flags": [{"alert": "Build your pipeline to unlock trend analysis", "reason": f"Only {total_leads} leads available."}],
-            "reason": f"Only {total_leads} leads. Need at least 4 for momentum analysis.",
-        }
+    with db_conn() as conn:
+        cur = conn.cursor()
+        total_leads = cur.execute("SELECT COUNT(*) FROM leads").fetchone()[0]
+        if total_leads < 4:
+            return {
+                "trend": "insufficient",
+                "trend_direction": "Insufficient data - add more leads",
+                "risk_flags": [],
+                "opportunity_flags": [{"alert": "Build your pipeline to unlock trend analysis", "reason": f"Only {total_leads} leads available."}],
+                "reason": f"Only {total_leads} leads. Need at least 4 for momentum analysis.",
+            }
 
-    window_size = max(2, min(6, total_leads // 2))
-    recent_scores = [row[0] for row in cur.execute("SELECT score FROM leads ORDER BY created_at DESC LIMIT ?", (window_size,)).fetchall()]
-    older_scores = [row[0] for row in cur.execute("SELECT score FROM leads ORDER BY created_at ASC LIMIT ?", (window_size,)).fetchall()]
-    hot_count = cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0]
-    avg_score = cur.execute("SELECT AVG(score) FROM leads").fetchone()[0] or 0
-    conn.close()
+        window_size = max(2, min(6, total_leads // 2))
+        recent_scores = [row[0] for row in cur.execute("SELECT score FROM leads ORDER BY created_at DESC LIMIT ?", (window_size,)).fetchall()]
+        older_scores = [row[0] for row in cur.execute("SELECT score FROM leads ORDER BY created_at ASC LIMIT ?", (window_size,)).fetchall()]
+        hot_count = cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0]
+        avg_score = cur.execute("SELECT AVG(score) FROM leads").fetchone()[0] or 0
 
     recent_avg = sum(recent_scores) / len(recent_scores)
     older_avg = sum(older_scores) / len(older_scores)
@@ -1092,13 +1115,12 @@ def get_alerts():
 
 @app.post("/deal/assist")
 def deal_assist(req: DealAssistRequest):
-    conn = get_db()
-    cur = conn.cursor()
-    row = cur.execute(
-        "SELECT id, company, budget, interest, score, category, industry, region, deal_stage, notes FROM leads WHERE id = ?",
-        (req.lead_id,),
-    ).fetchone()
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        row = cur.execute(
+            "SELECT id, company, budget, interest, score, category, industry, region, deal_stage, notes FROM leads WHERE id = ?",
+            (req.lead_id,),
+        ).fetchone()
     if not row:
         return {"error": f"Lead ID {req.lead_id} not found"}
 
@@ -1130,13 +1152,12 @@ def deal_assist(req: DealAssistRequest):
 
 @app.post("/followup/plan")
 def followup_plan(req: FollowupRequest):
-    conn = get_db()
-    cur = conn.cursor()
-    row = cur.execute(
-        "SELECT id, company, score, category, deal_stage, industry FROM leads WHERE id = ?",
-        (req.lead_id,),
-    ).fetchone()
-    conn.close()
+    with db_conn() as conn:
+        cur = conn.cursor()
+        row = cur.execute(
+            "SELECT id, company, score, category, deal_stage, industry FROM leads WHERE id = ?",
+            (req.lead_id,),
+        ).fetchone()
     if not row:
         return {"error": f"Lead ID {req.lead_id} not found"}
 
@@ -1473,7 +1494,6 @@ def chat_test():
         )
         return {
             "status": "ok",
-            "api_key_prefix": api_key[:8] + "...",
             "model": "llama-3.3-70b-versatile",
             "test_response": result,
         }
