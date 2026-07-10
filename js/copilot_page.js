@@ -1,5 +1,14 @@
 const API = 'http://127.0.0.1:8000';
 
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
     await Promise.allSettled([
         loadKPIs(),
@@ -52,7 +61,7 @@ async function loadInsights() {
         container.innerHTML = items.map(text => `
             <div class="insight-item">
                 <span class="insight-icon">AI</span>
-                <span class="insight-text">${text}</span>
+                <span class="insight-text">${escapeHtml(text)}</span>
             </div>
         `).join('');
     } catch (e) {
@@ -62,6 +71,7 @@ async function loadInsights() {
 
 async function loadNextActions() {
     const container = document.getElementById('next-actions-container');
+    if (!container) return;
     try {
         const res = await fetch(`${API}/actions/next`);
         const data = await res.json();
@@ -79,11 +89,11 @@ async function loadNextActions() {
                     <div class="action-rank">${i + 1}</div>
                     <div class="action-info">
                         <div class="action-lead">
-                            ${item.company || `Lead #${item.lead_id}`}
-                            <span class="category-badge" style="background:${c}18;color:${c};margin-left:6px;">${item.category} · ${item.score}/100</span>
+                            ${escapeHtml(item.company || `Lead #${item.lead_id}`)}
+                            <span class="category-badge" style="background:${c}18;color:${c};margin-left:6px;">${escapeHtml(item.category)} â€¢ ${escapeHtml(item.score)}/100</span>
                         </div>
-                        <div class="action-text">${item.action}</div>
-                        <div class="action-reason">${item.reason}</div>
+                        <div class="action-text">${escapeHtml(item.action)}</div>
+                        <div class="action-reason">${escapeHtml(item.reason)}</div>
                     </div>
                 </div>`;
         }).join('');
@@ -104,18 +114,18 @@ async function loadSalesTrends() {
         const risk = document.getElementById('risk-container');
         const opp = document.getElementById('opportunity-container');
 
-        if (badge) badge.innerHTML = `<span style="color:${color};">${data.trend_direction ?? data.trend}</span>`;
-        if (dir && data.trend_reason) dir.innerHTML = `<em style="font-size:13px;">${data.trend_reason}</em>`;
+        if (badge) badge.innerHTML = `<span style="color:${color};">${escapeHtml(data.trend_direction ?? data.trend)}</span>`;
+        if (dir && data.trend_reason) dir.innerHTML = `<em style="font-size:13px;">${escapeHtml(data.trend_reason)}</em>`;
 
         if (risk) {
             risk.innerHTML = data.risk_flags?.length
-                ? `<div class="flag-block risk"><strong style="color:#f87171;font-size:13px;">Risk Alerts</strong><ul>${data.risk_flags.map(r => `<li><strong>${r.alert}</strong><br><em style="font-size:12px;color:var(--text-muted);">${r.reason}</em></li>`).join('')}</ul></div>`
+                ? `<div class="flag-block risk"><strong style="color:#f87171;font-size:13px;">Risk Alerts</strong><ul>${data.risk_flags.map(r => `<li><strong>${escapeHtml(r.alert)}</strong><br><em style="font-size:12px;color:var(--text-muted);">${escapeHtml(r.reason)}</em></li>`).join('')}</ul></div>`
                 : `<div class="flag-block clear">No active risks detected</div>`;
         }
 
         if (opp) {
             opp.innerHTML = data.opportunity_flags?.length
-                ? `<div class="flag-block opportunity"><strong style="color:#22c55e;font-size:13px;">Opportunities</strong><ul>${data.opportunity_flags.map(o => `<li><strong>${o.alert}</strong><br><em style="font-size:12px;color:var(--text-muted);">${o.reason}</em></li>`).join('')}</ul></div>`
+                ? `<div class="flag-block opportunity"><strong style="color:#22c55e;font-size:13px;">Opportunities</strong><ul>${data.opportunity_flags.map(o => `<li><strong>${escapeHtml(o.alert)}</strong><br><em style="font-size:12px;color:var(--text-muted);">${escapeHtml(o.reason)}</em></li>`).join('')}</ul></div>`
                 : '';
         }
     } catch (e) {
@@ -141,7 +151,7 @@ async function loadAlerts() {
 
         inner.innerHTML = data.alerts.map(a => {
             const c = a.level === 'warning' ? '#f87171' : '#60a5fa';
-            return `<div class="alert-item" style="border:1px solid ${c};background:${c}0f;margin-bottom:10px;"><h4 style="color:${c};margin:0 0 4px;font-size:14px;">${a.message}</h4><p style="font-size:13px;color:var(--text-muted);margin:0;">${a.reason}</p></div>`;
+            return `<div class="alert-item" style="border:1px solid ${c};background:${c}0f;margin-bottom:10px;"><h4 style="color:${c};margin:0 0 4px;font-size:14px;">${escapeHtml(a.message)}</h4><p style="font-size:13px;color:var(--text-muted);margin:0;">${escapeHtml(a.reason)}</p></div>`;
         }).join('');
     } catch (e) {
         console.warn('[Copilot] Alerts failed:', e);

@@ -383,7 +383,7 @@ async function processBotResponse(msg) {
         removeTyping(typingId);
 
         if (data.error) {
-            addMessage(`Error: ${data.error}`, 'bot');
+            addMessage(`Error: ${escapeHtml(data.error)}`, 'bot');
             return;
         }
 
@@ -409,7 +409,7 @@ async function processBotResponse(msg) {
         }
 
         const reply = data.response || 'No response received.';
-        addMessage(reply, 'bot');
+        addMessage(escapeHtml(reply), 'bot');
         addToHistory('user', msg);
         addToHistory('assistant', reply);
 
@@ -425,32 +425,43 @@ async function processBotResponse(msg) {
 }
 
 function formatToolResult(data) {
+    // Server/AI-supplied values are escaped; only the structural tags are literal HTML.
+    const resp = escapeHtml(data.response);
     if (data.action === 'multi_step' && Array.isArray(data.steps)) {
-        return `<strong>${data.response || 'Workflow generated.'}</strong><br><br>${data.steps.join('<br>')}`;
+        return `<strong>${resp || 'Workflow generated.'}</strong><br><br>${data.steps.map(escapeHtml).join('<br>')}`;
     }
 
     const result = data.result || {};
     if (data.tool === 'generate_campaign') {
-        return `<strong>${data.response}</strong><br><br><b>Theme:</b> ${result.theme || ''}<br><b>Strategy:</b> ${result.marketing_strategy || ''}<br><b>CTA:</b> ${result.cta || ''}`;
+        return `<strong>${resp}</strong><br><br><b>Theme:</b> ${escapeHtml(result.theme)}<br><b>Strategy:</b> ${escapeHtml(result.marketing_strategy)}<br><b>CTA:</b> ${escapeHtml(result.cta)}`;
     }
     if (data.tool === 'generate_email') {
-        return `<strong>${data.response}</strong><br><br><b>Subject:</b> ${result.subject || ''}<br><pre>${result.body || ''}</pre>`;
+        return `<strong>${resp}</strong><br><br><b>Subject:</b> ${escapeHtml(result.subject)}<br><pre>${escapeHtml(result.body)}</pre>`;
     }
     if (data.tool === 'generate_pitch') {
-        return `<strong>${data.response}</strong><br><br><b>Opening:</b> ${result.opening_hook || ''}<br><b>Positioning:</b> ${result.product_positioning || ''}<br><b>Closing:</b> ${result.closing_statement || ''}`;
+        return `<strong>${resp}</strong><br><br><b>Opening:</b> ${escapeHtml(result.opening_hook)}<br><b>Positioning:</b> ${escapeHtml(result.product_positioning)}<br><b>Closing:</b> ${escapeHtml(result.closing_statement)}`;
     }
     if (data.tool === 'analyze_leads') {
-        return `<strong>${data.response}</strong>`;
+        return `<strong>${resp}</strong>`;
     }
-    return data.response || 'Done.';
+    return resp || 'Done.';
 }
 // ── UI helpers ─────────────────────────────────────────────────────────────────
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 function updateSuggestions(items) {
     const container = document.getElementById('chatSuggestions');
     if (!container) return;
     const emojis = ['🔍', '📊', '🚀', '💡', '🧠'];
     container.innerHTML = items.map((item, i) =>
-        `<div class="suggestion-chip" onclick="sendSuggestion(this)">${emojis[i % emojis.length]} ${item}</div>`
+        `<div class="suggestion-chip" onclick="sendSuggestion(this)">${emojis[i % emojis.length]} ${escapeHtml(item)}</div>`
     ).join('');
     container.style.display = 'flex';
     setTimeout(() => container.style.opacity = '1', 100);
@@ -458,11 +469,15 @@ function updateSuggestions(items) {
 
 function addMessage(text, sender) {
     const body = document.getElementById('chatBody');
+    if (!body) return;
     const div = document.createElement('div');
     div.classList.add('chat-message', sender);
+    // User text is plain and must be escaped. Bot text is HTML that callers build
+    // from already-escaped values (see formatToolResult / processBotResponse).
+    const safe = sender === 'user' ? escapeHtml(text) : text;
     div.innerHTML = sender === 'bot'
-        ? `<div class="message-content"><div class="bot-avatar">🤖</div><div class="bubble">${text}</div></div>`
-        : `<div class="message-content"><div class="bubble">${text}</div></div>`;
+        ? `<div class="message-content"><div class="bot-avatar">🤖</div><div class="bubble">${safe}</div></div>`
+        : `<div class="message-content"><div class="bubble">${safe}</div></div>`;
     body.appendChild(div);
     body.scrollTo({ top: body.scrollHeight, behavior: 'smooth' });
 }

@@ -130,7 +130,7 @@
     </section>
 
     <footer>
-        <p>© 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
+        <p>ï¿½ 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
     </footer>
 
     <script src="js/app.js"></script>
@@ -155,14 +155,14 @@
 
                     return `
                         <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
-                            <td style="padding: 15px; font-weight: 700;">#${lead.id}</td>
-                            <td style="padding: 15px; color: var(--text-main);">${lead.company || 'N/A'}</td>
+                            <td style="padding: 15px; font-weight: 700;">#${escapeHtml(lead.id)}</td>
+                            <td style="padding: 15px; color: var(--text-main);">${escapeHtml(lead.company || 'N/A')}</td>
                             <td style="padding: 15px; color: var(--text-muted);">${lead.budget ? `$${Number(lead.budget).toLocaleString()}` : 'N/A'}</td>
-                            <td style="padding: 15px; color: var(--text-muted);">${lead.interest ?? 'N/A'}/10</td>
-                            <td style="padding: 15px; font-weight: 700;">${lead.score}/100</td>
-                            <td style="padding: 15px;"><span style="color: ${color}; font-weight: 600; background: ${color}15; padding: 4px 10px; border-radius: 4px;">${lead.category}</span></td>
-                            <td style="padding: 15px; color: var(--text-muted);">${lead.industry || 'N/A'}</td>
-                            <td style="padding: 15px; color: var(--text-muted);">${lead.region || 'N/A'}</td>
+                            <td style="padding: 15px; color: var(--text-muted);">${escapeHtml(lead.interest ?? 'N/A')}/10</td>
+                            <td style="padding: 15px; font-weight: 700;">${escapeHtml(lead.score)}/100</td>
+                            <td style="padding: 15px;"><span style="color: ${color}; font-weight: 600; background: ${color}15; padding: 4px 10px; border-radius: 4px;">${escapeHtml(lead.category)}</span></td>
+                            <td style="padding: 15px; color: var(--text-muted);">${escapeHtml(lead.industry || 'N/A')}</td>
+                            <td style="padding: 15px; color: var(--text-muted);">${escapeHtml(lead.region || 'N/A')}</td>
                         </tr>
                     `;
                 }).join('');
