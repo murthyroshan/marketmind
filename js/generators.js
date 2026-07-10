@@ -106,6 +106,7 @@ async function analyzeMarket() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
+        if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json();
         const content = `
             <strong>Demand Insight:</strong> ${data.demand_insight || data.trend}<br>
@@ -116,6 +117,7 @@ async function analyzeMarket() {
         showOutput('mA_output', content, data.ai_insight);
     } catch (e) {
         console.error(e);
+        showOutput('mA_output', "<b style='color:red'>Backend Error: Ensure server is running!</b>");
     }
 }
 
@@ -123,22 +125,28 @@ async function generateContent() {
     const product = document.getElementById("contentProduct").value;
     const platform = document.getElementById("contentPlatform").value;
 
-    const res = await fetch(`${API_BASE}/social`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ product, platform })
-    });
-    const data = await res.json();
-
     const output = document.getElementById("contentOutput");
-    output.style.display = "block";
-    output.innerHTML = `
-        <h4>Generated Content</h4>
-        <p><b>Tone:</b> ${data.tone}</p>
-        <p><b>Caption:</b><br>${data.caption}</p>
-        <p><b>Hashtags:</b> ${data.hashtags}</p>
-        <p><i>${data.ai_insight}</i></p>
-    `;
+    try {
+        const res = await fetch(`${API_BASE}/social`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ product, platform })
+        });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+
+        output.style.display = "block";
+        output.innerHTML = `
+            <h4>Generated Content</h4>
+            <p><b>Tone:</b> ${data.tone}</p>
+            <p><b>Caption:</b><br>${data.caption}</p>
+            <p><b>Hashtags:</b> ${data.hashtags}</p>
+            <p><i>${data.ai_insight}</i></p>
+        `;
+    } catch (e) {
+        output.style.display = "block";
+        output.innerHTML = "<b style='color:red'>Backend Error: Ensure server is running!</b>";
+    }
 }
 
 async function generateEmail() {
@@ -146,80 +154,29 @@ async function generateEmail() {
     const context = document.getElementById("emailContext").value;
     const product = document.getElementById("emailProduct").value;
 
-    const res = await fetch(`${API_BASE}/email`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recipient, context, product })
-    });
-    const data = await res.json();
-
-    document.getElementById("emailOutput").style.display = 'block';
-    document.getElementById("emailOutput").innerHTML = `
-        <b>Subject:</b> ${data.subject}<br><br>
-        <pre>${data.body}</pre><br>
-        <i>${data.follow_up_tip}</i>
-    `;
-}
-
-async function getDealStrategy() {
-    const leadId = document.getElementById('deal_lead_id')?.value;
-    if (!leadId) return;
-
+    const output = document.getElementById("emailOutput");
     try {
-        const res = await fetch(`${API_BASE}/deal/assist`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lead_id: parseInt(leadId, 10) })
+        const res = await fetch(`${API_BASE}/email`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ recipient, context, product })
         });
+        if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json();
-        if (data.error) {
-            showOutput('deal_output', data.error);
-            return;
-        }
 
-        const output = `
-            <div style="background: var(--card); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
-                <div style="font-size: 18px; font-weight: 700; margin-bottom: 15px; color: var(--primary);">${data.closing_strategy}</div>
-                <div style="margin-bottom: 12px;"><strong>Negotiation Advice:</strong> ${data.negotiation_advice || data.objection_focus}</div>
-                <div style="margin-bottom: 12px;"><strong>Recommended Next Step:</strong> ${data.recommended_next_step || data.explanation}</div>
-                <div style="margin-bottom: 12px;"><strong>Urgency:</strong> ${data.urgency_level}</div>
-                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); color: var(--text-muted); font-size: 14px;"><strong>Reasoning:</strong> ${data.explanation}</div>
-            </div>
+        output.style.display = 'block';
+        output.innerHTML = `
+            <b>Subject:</b> ${data.subject}<br><br>
+            <pre>${data.body}</pre><br>
+            <i>${data.follow_up_tip}</i>
         `;
-        showOutput('deal_output', output);
     } catch (e) {
-        showOutput('deal_output', "Backend Error: Ensure server is running!");
+        output.style.display = 'block';
+        output.innerHTML = "<b style='color:red'>Backend Error: Ensure server is running!</b>";
     }
 }
 
-async function getFollowupPlan() {
-    const leadId = document.getElementById('followup_lead_id')?.value;
-    if (!leadId) return;
-
-    try {
-        const res = await fetch(`${API_BASE}/followup/plan`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lead_id: parseInt(leadId, 10) })
-        });
-        const data = await res.json();
-        if (data.error) {
-            showOutput('followup_output', data.error);
-            return;
-        }
-        const planSteps = Object.entries(data.plan).map(([day, action]) => `
-            <div style="margin-bottom: 12px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 8px;">
-                <strong style="color: var(--primary);">${day.toUpperCase()}:</strong> ${action}
-            </div>
-        `).join('');
-        showOutput('followup_output', `
-            <div style="background: var(--card); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
-                <div style="margin-bottom: 15px;"><strong>Lead Category:</strong> ${data.category} | <strong>Score:</strong> ${data.score}/100</div>
-                ${planSteps}
-                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); color: var(--text-muted); font-size: 13px;">${data.note}</div>
-            </div>
-        `);
-    } catch (e) {
-        showOutput('followup_output', "Backend Error: Ensure server is running!");
-    }
-}
+// NOTE: getDealStrategy() and getFollowupPlan() live in deal_tools.js, which
+// leads.html loads after this file. The duplicate definitions that used to be
+// here were dead (always overridden) and read element ids that don't exist on
+// this page, so they were removed to avoid load-order fragility.

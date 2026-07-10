@@ -12,7 +12,9 @@ async function predictCampaign() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ platform, goal })
         });
+        if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json();
+        const metrics = data.metrics_used || {};
 
         let riskColor = '#f59e0b';
         if (data.risk_level === 'Low') riskColor = '#22c55e';
@@ -38,7 +40,7 @@ async function predictCampaign() {
             <p style="line-height: 1.6; color: var(--text);"><strong>Suggestions:</strong> ${data.suggestions || ''}</p>
 
             <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); font-size: 12px; color: var(--text-muted);">
-                Based on ${data.metrics_used.total_leads} leads, avg score ${data.metrics_used.avg_lead_score}/100, ${data.metrics_used.platform_campaigns} ${platform} campaigns, and ${data.metrics_used.goal_campaigns} ${goal} campaigns.
+                Based on ${metrics.total_leads ?? 0} leads, avg score ${metrics.avg_lead_score ?? 0}/100, ${metrics.platform_campaigns ?? 0} ${platform} campaigns, and ${metrics.goal_campaigns ?? 0} ${goal} campaigns.
             </div>
         `;
 

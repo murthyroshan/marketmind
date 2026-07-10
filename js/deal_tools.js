@@ -114,6 +114,11 @@ async function getFollowupPlan() {
             return;
         }
 
+        if (!data.plan || typeof data.plan !== 'object') {
+            showOutput('followup_output', 'No follow-up plan was returned. Please try again.');
+            return;
+        }
+
         const planSteps = Object.entries(data.plan).map(([day, action]) => `
             <div style="margin-bottom: 12px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 8px;">
                 <strong style="color: var(--primary);">${day.toUpperCase()}:</strong> ${action}
