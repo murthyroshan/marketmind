@@ -1,4 +1,6 @@
-const API_BASE = "http://127.0.0.1:8000";
+// API_BASE is declared once in app.js, which every page loads before this file.
+// Re-declaring it here threw "Identifier 'API_BASE' has already been declared"
+// and killed this entire script.
 
 let demandChart = null;
 let matrixChart = null;

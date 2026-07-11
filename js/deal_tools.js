@@ -1,30 +1,27 @@
 let selectedLeadId = null;
 
-document.addEventListener('DOMContentLoaded', () => {
-    loadLeadsDropdown();
-});
-
-async function loadLeadsDropdown() {
+// leads.html already fetches GET /leads to build the table, so it hands the
+// same rows straight to us instead of us fetching them a second time.
+function populateLeadsDropdown(leads) {
     try {
-        const res = await fetch('http://127.0.0.1:8000/leads');
-        const data = await res.json();
         const dropdown = document.getElementById('lead-selector');
         const status = document.getElementById('lead-selector-status');
+        if (!dropdown || !status) return;
 
-        if (!data.leads || data.leads.length === 0) {
+        if (!leads || !leads.length) {
             status.innerHTML = 'No leads found. Generate leads first.';
             status.style.color = 'var(--warning)';
             return;
         }
 
-        data.leads.forEach(lead => {
+        leads.forEach(lead => {
             const option = document.createElement('option');
             option.value = lead.id;
             option.textContent = `${lead.company || `Lead #${lead.id}`} - ${lead.category} - Score ${lead.score} - ${lead.deal_stage || 'Prospecting'}`;
             dropdown.appendChild(option);
         });
 
-        status.innerHTML = `${data.leads.length} leads available`;
+        status.innerHTML = `${leads.length} leads available`;
         status.style.color = 'var(--success)';
 
         dropdown.addEventListener('change', (e) => {
@@ -45,8 +42,11 @@ async function loadLeadsDropdown() {
             }
         });
     } catch (e) {
-        document.getElementById('lead-selector-status').innerHTML = 'Failed to load leads. Ensure backend is running.';
-        document.getElementById('lead-selector-status').style.color = 'var(--error)';
+        const status = document.getElementById('lead-selector-status');
+        if (status) {
+            status.innerHTML = 'Failed to load leads. Ensure backend is running.';
+            status.style.color = 'var(--error)';
+        }
     }
 }
 
