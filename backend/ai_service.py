@@ -1,25 +1,32 @@
 """
 ai_service.py
 -------------
-AI service layer for SalesSparkAI Copilot.
-Handles all Groq API communication with context-aware, token-optimized prompts.
+AI agent layer for the SalesSparkAI Copilot.
 
-Architecture:
-  routes (main.py) → build_chat_context() → generate_chat_response() → Groq API
+Provides a streaming, tool-calling agent built on Groq. Orchestration is
+model-driven: the LLM decides when to call a tool, and the caller (main.py)
+supplies a ``tool_executor`` callback that runs the real platform action. This
+module never imports main.py, so there is no circular dependency.
+
+    main.py  ──build_messages()──►  stream_agent(messages, tool_executor)
+                                         │  yields UI events (tokens, tool
+                                         │  results, navigate actions)
+                                         ▼
+                                     Groq API (streaming + function calling)
 """
 
 import os
-import re
 import json
 import logging
-from typing import Optional, List, Dict
+from typing import Callable, Dict, Iterator, List, Optional
+
 from dotenv import load_dotenv
 
-# ── Load .env first, before any os.getenv call ────────────────────────────────
 load_dotenv()
 
-logger = logging.getLogger("saleskpark.ai")
-logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("salesspark.ai")
+
+MODEL = "llama-3.3-70b-versatile"
 
 # ── Groq client singleton ──────────────────────────────────────────────────────
 try:
@@ -27,300 +34,471 @@ try:
     _groq_available = True
 except ImportError:
     _groq_available = False
+    Groq = None
     logger.error("[ai_service] groq package missing. Run: pip install groq python-dotenv")
 
-_groq_client: Optional[object] = None
 _GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
-
+_groq_client = None
 if _GROQ_API_KEY and _groq_available:
     try:
         _groq_client = Groq(api_key=_GROQ_API_KEY)
-        logger.info("[ai_service] Groq client ready. Key: %s...", _GROQ_API_KEY[:8])
-    except Exception as e:
+        logger.info("[ai_service] Groq client ready.")
+    except Exception as e:  # pragma: no cover - depends on network/env
         logger.error("[ai_service] Groq client init failed: %s", e)
 else:
     logger.error("[ai_service] GROQ_API_KEY not set or groq not installed.")
 
 
-# ── Page → URL map (used in navigation responses) ─────────────────────────────
-PAGE_URL_MAP: Dict[str, str] = {
-    "home":        "/index.html",
-    "landing":     "/index.html",
-    "index":       "/index.html",
-    "dashboard":   "/sales_copilot.html",
-    "copilot":     "/sales_copilot.html",
-    "sales_copilot":"/sales_copilot.html",
-    "leads":       "/leads.html",
-    "tools":       "/tools.html",
-    "campaigns":   "/tools.html",
-    "pitch":       "/tools.html",
-    "email":       "/tools.html",
-    "social":      "/tools.html",
-    "market":      "/market_intelligence.html",
-    "prediction":  "/prediction.html",
-    "deal-tools":  "/leads.html#deal-tools",
+def groq_ready() -> bool:
+    """True when the Groq client is initialized and usable."""
+    return _groq_client is not None
+
+
+# ── Navigation page keys (shared with the navigate_to_page tool) ───────────────
+PAGE_KEYS = ["home", "sales_copilot", "leads", "tools", "market", "prediction"]
+
+
+# ── Tool schemas (Groq function calling) ───────────────────────────────────────
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "navigate_to_page",
+            "description": (
+                "Open an app page. ONLY when the user explicitly asks to go to/open/show a PAGE. "
+                "Never to answer a data question — answer those in chat."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "page": {"type": "string", "enum": PAGE_KEYS, "description": "Which page to open."}
+                },
+                "required": ["page"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "analyze_pipeline",
+            "description": (
+                "LIVE pipeline snapshot: lead counts by category, average score, health, top lead. "
+                "Always call before answering any question about the user's numbers."
+            ),
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_next_actions",
+            "description": "Get a prioritized list of the next best sales actions based on the user's current leads.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_campaign",
+            "description": "Generate a multi-channel marketing campaign strategy for a product.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "product": {"type": "string", "description": "The product or service to promote."},
+                    "audience": {"type": "string", "description": "Target audience."},
+                    "platform": {"type": "string", "description": "Channel, e.g. LinkedIn, Instagram, Email."},
+                    "goal": {"type": "string", "description": "Objective, e.g. Leads, Awareness, Sales."},
+                },
+                "required": ["product"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "draft_email",
+            "description": "Write a personalized sales outreach email.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "recipient": {"type": "string", "description": "Who the email is addressed to."},
+                    "product": {"type": "string"},
+                    "context": {"type": "string", "description": "The situation or pain point the email addresses."},
+                },
+                "required": ["recipient", "product"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_pitch",
+            "description": "Generate a persuasive sales pitch for a product and target buyer.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "product": {"type": "string"},
+                    "target": {"type": "string", "description": "The target buyer or segment."},
+                },
+                "required": ["product"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_market_intelligence",
+            "description": "Analyze market demand, competition, and opportunity for an industry.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "industry": {"type": "string", "description": "e.g. saas, fintech, healthcare, retail."},
+                    "region": {"type": "string", "description": "Region to analyze, e.g. Global, North America, Europe."},
+                    "time_horizon": {"type": "string", "description": "Short, Mid, or Long."},
+                },
+                "required": ["industry"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_leads",
+            "description": (
+                "List the user's actual leads by name and score. Use when they ask which leads "
+                "are hot/warm/cold, who to call, or to name specific accounts."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {"type": "string", "enum": ["Hot", "Warm", "Cold"], "description": "Filter by category. Omit for all."},
+                    "limit": {"type": "integer", "description": "How many to return (max 10)."},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "score_lead",
+            "description": (
+                "Score and save a NEW lead (0-100, Hot/Warm/Cold). Needs company, budget in "
+                "dollars, and interest 1-10. If any are missing, ask the user first."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "company": {"type": "string"},
+                    "budget": {"type": "integer", "description": "Annual budget in dollars."},
+                    "interest": {"type": "integer", "description": "Interest level, 1-10."},
+                    "industry": {"type": "string"},
+                    "region": {"type": "string"},
+                },
+                "required": ["company", "budget", "interest"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_deal_strategy",
+            "description": "Build a closing strategy for an EXISTING lead: how to close it, discount range, objections, next step.",
+            "parameters": {
+                "type": "object",
+                "properties": {"company": {"type": "string", "description": "Company name or lead id."}},
+                "required": ["company"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_followup_plan",
+            "description": "Build a day 1 / day 3 / day 7 follow-up sequence for an EXISTING lead.",
+            "parameters": {
+                "type": "object",
+                "properties": {"company": {"type": "string", "description": "Company name or lead id."}},
+                "required": ["company"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "predict_campaign",
+            "description": "Predict engagement and conversion for a campaign before it launches.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "platform": {"type": "string", "description": "LinkedIn, Email, Instagram, Twitter…"},
+                    "goal": {"type": "string", "description": "Leads, Awareness, Sales, Engagement…"},
+                },
+                "required": ["platform", "goal"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_social",
+            "description": "Write a social media post (with hashtags) for a product on a platform.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "product": {"type": "string"},
+                    "platform": {"type": "string", "description": "LinkedIn, Instagram, Twitter…"},
+                },
+                "required": ["product", "platform"],
+            },
+        },
+    },
+]
+
+# Human-friendly status labels shown while a tool runs.
+TOOL_LABELS = {
+    "navigate_to_page": "Opening page",
+    "analyze_pipeline": "Analyzing your pipeline",
+    "get_next_actions": "Finding next best actions",
+    "generate_campaign": "Creating campaign",
+    "draft_email": "Drafting email",
+    "generate_pitch": "Writing pitch",
+    "get_market_intelligence": "Analyzing market",
+    "list_leads": "Pulling your leads",
+    "score_lead": "Scoring lead",
+    "get_deal_strategy": "Building closing plan",
+    "get_followup_plan": "Planning follow-ups",
+    "predict_campaign": "Running prediction",
+    "generate_social": "Writing social post",
 }
 
-# ── Greeting intent detection (zero-token shortcut) ───────────────────────────
-_GREETING_PATTERN = re.compile(
-    r"^\s*(hi|hello|hey|good\s*morning|good\s*afternoon|good\s*evening|howdy|sup|what'?s\s*up|yo)\s*[.!?]?\s*$",
-    re.IGNORECASE,
-)
 
-_GREETING_RESPONSE = (
-    "👋 Hello! I'm <strong>SalesSparkAI Copilot</strong> — your AI sales intelligence assistant.<br><br>"
-    "Here's what I can help you with:<br>"
-    "• 🔥 <strong>Analyze leads</strong> — find your hottest prospects<br>"
-    "• 🚀 <strong>Launch campaigns</strong> — generate targeted strategies<br>"
-    "• 🗺️ <strong>Navigate the platform</strong> — just say \"Show my leads\" or \"Open campaigns\"<br>"
-    "• 📊 <strong>Pipeline health</strong> — get a real-time sales overview<br><br>"
-    "<em>What would you like to explore today?</em>"
-)
-
-
-def _is_greeting(message: str) -> bool:
-    """Returns True if the message is a pure greeting — no AI call needed."""
-    return bool(_GREETING_PATTERN.match(message.strip()))
-
-
-# ── Product question detection (zero-token shortcut) ──────────────────────────
-_PRODUCT_Q_PATTERN = re.compile(
-    r"^\s*(what\s+(is|are|does)\s+(this|the|sales\s*spark|salессhark)?\s*(website|platform|tool|app|product|system|software|it|salessparkAI|sales\s*spark\s*ai)[\s?]*)"
-    r"|(how\s+does\s+(this|the)?\s*(platform|tool|app|product|website|salessparkAI|sales\s*spark\s*ai)?\s*work[s?]*)"
-    r"|(tell\s+me\s+about\s+(this|the)?\s*(platform|tool|salessparkAI|sales\s*spark\s*ai))"
-    r"|(what\s+can\s+(you|this\s+platform|salessparkAI|sales\s*spark\s*ai)\s+do[?]*)"
-    r"|(what'?s?\s+(this|salessparkAI|sales\s*spark\s*ai)[?]*)",
-    re.IGNORECASE,
-)
-
-_PRODUCT_RESPONSE = (
-    "<strong>SalesSparkAI</strong> is an AI-powered sales enablement platform designed to help "
-    "sales teams analyze leads, generate outreach content, and optimize their sales strategy.<br><br>"
-    "🧰 <strong>Platform tools include:</strong><br>"
-    "• 🤖 <strong>AI Sales Copilot</strong> — real-time pipeline insights &amp; next-best-action guidance<br>"
-    "• 🚀 <strong>Campaign Generator</strong> — multi-channel marketing strategies<br>"
-    "• 🎯 <strong>Sales Pitch Generator</strong> — persuasive outreach scripts<br>"
-    "• 📧 <strong>Email Outreach</strong> — personalized email drafts<br>"
-    "• ⚖️ <strong>Lead Scoring</strong> — scores leads 0-100 (Hot / Warm / Cold)<br>"
-    "• 📱 <strong>Social Media Generator</strong> — posts and hashtags<br>"
-    "• 📊 <strong>Market Intelligence</strong> — demand, competition &amp; opportunity analysis<br>"
-    "• 🔒 <strong>Deal Tools</strong> — closure strategies and follow-up plans<br><br>"
-    "<em>Want me to open a specific tool or analyze your pipeline?</em>"
-)
-
-
-def _is_product_question(message: str) -> bool:
-    """Returns True if the message is a generic product/platform question."""
-    return bool(_PRODUCT_Q_PATTERN.match(message.strip()))
-
-
-# ── System Prompt ──────────────────────────────────────────────────────────────
-def _build_system_prompt(pipeline_summary: str, current_page: str) -> str:
-    """
-    Concise, token-efficient system prompt.
-    Embeds a minimal pipeline summary and current page context.
-    """
-    page_note = (
-        f"The user is currently on the '{current_page}' page."
-        if current_page and current_page != "unknown"
-        else ""
-    )
-
-    nav_pages = ", ".join(PAGE_URL_MAP.keys())
-
-    return (
-        "You are SalesSparkAI Copilot, the AI assistant for the SalesSparkAI platform.\n\n"
-
-        f"{page_note}\n\n"
-
-        "ABOUT THE PLATFORM:\n"
-        "SalesSparkAI is an AI-powered sales enablement platform that helps sales teams "
-        "analyze leads, generate outreach content, and optimize sales strategies.\n\n"
-
-        "PLATFORM TOOLS:\n"
-        "• AI Sales Copilot – Pipeline insights and next-best-action guidance.\n"
-        "• Campaign Generator – Multi-channel marketing strategies.\n"
-        "• Sales Pitch Generator – Persuasive outreach scripts.\n"
-        "• Email Outreach – Personalized email drafts.\n"
-        "• Social Media Generator – Social posts and hashtags.\n"
-        "• Lead Scoring – Scores leads 0-100 (Hot ≥80, Warm 55-79, Cold <55).\n"
-        "• Market Intelligence – Demand, competition, and opportunity analysis.\n"
-        "• Deal Tools – Closure strategies and follow-up plans.\n\n"
-
-        "LIVE PIPELINE SUMMARY (use only when user asks about sales data):\n"
-        f"{pipeline_summary}\n\n"
-
-        "BEHAVIOR RULES:\n"
-        "1. GREETING (hi/hello/hey): Warmly introduce yourself and list 2-3 things you can help with. "
-        "Never mention pipeline numbers in a greeting.\n"
-        "2. PRODUCT QUESTIONS (what is this website, what does SalesSparkAI do, how does this work, "
-        "what is this platform, tell me about this tool): Explain the platform using ABOUT THE PLATFORM "
-        "and PLATFORM TOOLS above. Keep it concise. No pipeline data.\n"
-        "3. FEATURE QUESTIONS (what features are available, what can you do): List the PLATFORM TOOLS "
-        "with a one-line description each. No pipeline data.\n"
-        "4. NAVIGATION REQUEST (show leads, open campaigns, take me to X): Return ONLY "
-        f"a JSON object: {{\"response\": \"short message\", \"action\": \"navigate\", \"page\": \"<page_key>\"}}. "
-        f"Valid page keys: {nav_pages}. "
-        "STRICT RULES: (a) Use ONLY the listed page keys — never invent URLs or page names. "
-        "(b) Output ONLY the raw JSON object — no markdown fences, no explanation, no text before or after. "
-        "(c) If no valid page key matches, respond with a normal text answer instead.\n"
-        "5. SALES ANALYTICS (how many leads, pipeline health, scores, deals, hot leads): "
-        "Use LIVE PIPELINE SUMMARY for a data-grounded answer. Always end with one concrete next-step.\n"
-        "6. PAGE-AWARE GUIDANCE (how do I use this, how does X work, guide me): "
-        "Tailor your answer to the user's current page. "
-        "On 'leads' page → explain lead scores (Hot >=80, Warm 55-79, Cold <55) and the Deal Tools section. "
-        "On 'campaigns' page → explain how to fill in the generator form and what outputs to expect. "
-        "On 'copilot' page → explain KPI cards, AI Insights panel, and Next Best Actions list. "
-        "On 'market' page → explain how to enter an industry and interpret the AI output. "
-        "On 'prediction' page → explain the prediction inputs and how to read the result. "
-        "Keep guidance to <=80 words and always end with an offer to do something.\n"
-        "7. OFF-TOPIC (jokes, coding, recipes, general knowledge, anything unrelated to sales): "
-        "Reply with exactly: 'I'm focused on SalesSparkAI features like lead analysis, campaign generation, "
-        "and sales strategy. How can I help you with the platform?' — do not deviate from this sentence.\n\n"
-
-        "STYLE: Concise (<=100 words). Warm, confident, direct. "
-        "No Markdown headers. Bullets are fine. "
-        "For navigation requests output ONLY the raw JSON — no extra text before or after."
-    )
-
-
-# ── Context Builder ────────────────────────────────────────────────────────────
+# ── Context builder ────────────────────────────────────────────────────────────
 def build_pipeline_summary(db_context: dict) -> str:
-    """
-    Converts the full db_context dict into a short, token-efficient
-    pipeline summary string. Avoids sending raw lead records to the AI.
-    """
-    total  = db_context.get("total_leads", 0)
-    hot    = db_context.get("hot_leads", 0)
-    warm   = db_context.get("warm_leads", 0)
-    cold   = db_context.get("cold_leads", 0)
-    avg    = db_context.get("avg_score", 0)
+    """Compress the pipeline snapshot into a short, token-efficient summary."""
+    total = db_context.get("total_leads", 0)
+    hot = db_context.get("hot_leads", 0)
+    warm = db_context.get("warm_leads", 0)
+    cold = db_context.get("cold_leads", 0)
+    avg = db_context.get("avg_score", 0)
     health = db_context.get("pipeline_health", "Unknown")
-    camps  = db_context.get("total_campaigns", 0)
+    camps = db_context.get("total_campaigns", 0)
 
-    # Only include top lead if present
     top_lead_line = ""
     top_leads = db_context.get("top_leads", [])
     if top_leads:
         t = top_leads[0]
-        top_lead_line = f"\nTop Lead: {t['company']} | {t['category']} | Score: {t['score']}/100"
+        top_lead_line = f" | Top Lead: {t.get('company')} ({t.get('category')}, {t.get('score')}/100)"
 
     return (
         f"Total Leads: {total} | Hot: {hot} | Warm: {warm} | Cold: {cold} | "
-        f"Avg Score: {avg}/100 | Health: {health} | Campaigns: {camps}"
-        f"{top_lead_line}"
+        f"Avg Score: {avg}/100 | Health: {health} | Campaigns: {camps}{top_lead_line}"
     )
 
 
-# ── Navigation Response Parser ─────────────────────────────────────────────────
-def _parse_navigation(raw: str) -> dict:
-    """
-    Checks if the AI returned a navigation JSON.
-    Returns a dict with action/page keys if valid, otherwise returns the plain text.
-    Handles cases where the model wraps JSON in markdown fences.
-    """
-    stripped = raw.strip()
+# ── System prompt ──────────────────────────────────────────────────────────────
+def build_system_prompt(pipeline_summary: str, current_page: str) -> str:
+    page_note = (
+        f"The user is currently on the '{current_page}' page."
+        if current_page and current_page not in ("", "unknown")
+        else ""
+    )
+    return (
+        "You are SalesSparkAI Copilot, an elite AI sales assistant embedded in the SalesSparkAI "
+        "platform. You help sales teams analyze leads, generate outreach (campaigns, emails, pitches, "
+        "social posts), run market and campaign analysis, and prioritize deals.\n"
+        f"{page_note}\n\n"
+        "TOOLS — you can take real actions. Use them proactively instead of guessing:\n"
+        "- ANY question about the user's pipeline, scores, or health -> call analyze_pipeline "
+        "FIRST, then answer using the real numbers it returns.\n"
+        "- Which leads are hot / name my leads / who should I call -> list_leads.\n"
+        "- 'what should I do next' / priorities -> get_next_actions.\n"
+        "- Add or score a NEW lead -> score_lead (ask for company, budget, and interest 1-10 if missing).\n"
+        "- How do I close / negotiate a specific account -> get_deal_strategy.\n"
+        "- Follow-up sequence or cadence for an account -> get_followup_plan.\n"
+        "- Will this campaign work / predict results -> predict_campaign.\n"
+        "- Create a campaign, email, pitch, social post, or market analysis -> the matching tool.\n"
+        "- navigate_to_page ONLY when the user explicitly asks to open/go to/show a PAGE "
+        "('show my leads', 'open the tools page'). A QUESTION is never a navigation request: "
+        "'how is my pipeline?', 'which leads are hot?', 'what should I do next?' are answered "
+        "in the chat with data — never by navigating the user away. When in doubt, answer, don't navigate.\n"
+        "Never invent pipeline numbers, lead names, or scores — always get them from a tool.\n\n"
+        f"CURRENT CONTEXT (may be stale; prefer analyze_pipeline): {pipeline_summary}\n\n"
+        "STYLE: Professional, warm, and SHORT — 2-4 sentences (<=60 words). This is a small chat "
+        "window, so long answers get scrolled away. Lead with the answer, skip preamble, use at most 3 "
+        "tight bullets, and close with one concrete next step or question. When a tool already "
+        "returns a generated asset (campaign, email, pitch), the UI renders it as a card — just "
+        "introduce it in one line, do not repeat its contents. If a request is off-topic, briefly "
+        "steer back to their sales work.\n"
+        "Speak naturally — never output raw JSON, code fences, or tool syntax; the tools handle actions."
+    )
 
-    # Strip markdown code fences if present (e.g. ```json ... ```)
-    if stripped.startswith("```"):
-        stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
-        stripped = re.sub(r"\s*```$", "", stripped).strip()
 
-    # The AI should emit raw JSON for navigation; detect it
-    if stripped.startswith("{") and "action" in stripped:
-        try:
-            parsed = json.loads(stripped)
-            if parsed.get("action") == "navigate" and parsed.get("page"):
-                page_key = parsed["page"].lower().strip()
-                url = PAGE_URL_MAP.get(page_key)
-                if url:
-                    return {
-                        "response": parsed.get("response", f"Opening {page_key}..."),
-                        "action": "navigate",
-                        "page": page_key,
-                        "url": url,
-                    }
-        except json.JSONDecodeError:
-            pass  # Not valid JSON, treat as plain text
-    return {"response": raw}
-
-
-# ── Public Interface ───────────────────────────────────────────────────────────
-def generate_chat_response(
+def build_messages(
     message: str,
-    db_context: dict,
-    current_page: str = "unknown",
-    history: List[Dict[str, str]] = None,
-) -> dict:
-    """
-    Sends user message + minimal context to Groq and returns a structured dict.
-
-    Args:
-        message      : The user's chat message.
-        db_context   : Live pipeline metrics from SQLite.
-        current_page : The page the user is currently on (sent from frontend).
-        history      : Last N conversation turns [{role, content}, ...].
-
-    Returns:
-        dict with at minimum {"response": str}.
-        Navigation requests include {"action": "navigate", "page": str, "url": str}.
-
-    Raises:
-        RuntimeError : If Groq client is unavailable.
-        ValueError   : If message is empty.
-    """
-    clean = (message or "").strip()
-    if not clean:
-        raise ValueError("Message must not be empty.")
-
-    # ── Zero-token greeting shortcut ──────────────────────────────────────────
-    if _is_greeting(clean):
-        logger.info("[ai_service] Greeting detected — skipping Groq call.")
-        return {"response": _GREETING_RESPONSE}
-
-    # ── Zero-token product question shortcut ──────────────────────────────────
-    if _is_product_question(clean):
-        logger.info("[ai_service] Product question detected — skipping Groq call.")
-        return {"response": _PRODUCT_RESPONSE}
-
-    if not _groq_client:
-        missing = "GROQ_API_KEY not set" if not _GROQ_API_KEY else "groq package missing"
-        raise RuntimeError(f"Groq client not initialized: {missing}")
-
-    # Build token-efficient inputs
-    pipeline_summary = build_pipeline_summary(db_context)
-    system_prompt    = _build_system_prompt(pipeline_summary, current_page)
-
-    # Keep only last 3 history turns (token optimization)
-    trimmed_history: List[Dict[str, str]] = []
+    pipeline_summary: str,
+    current_page: str,
+    history: Optional[List[Dict[str, str]]] = None,
+) -> List[Dict]:
+    """Assemble the Groq message list from system prompt + trimmed history + user turn."""
+    messages: List[Dict] = [
+        {"role": "system", "content": build_system_prompt(pipeline_summary, current_page)}
+    ]
     if history:
-        for turn in history[-6:]:   # last 6 entries = 3 user + 3 assistant
-            role = turn.get("role", "").strip()
-            content = turn.get("content", "").strip()
+        for turn in history[-8:]:  # last 8 turns keeps context without bloating tokens
+            role = (turn.get("role") or "").strip()
+            content = (turn.get("content") or "").strip()
             if role in ("user", "assistant") and content:
-                trimmed_history.append({"role": role, "content": content})
-
-    messages = [{"role": "system", "content": system_prompt}]
-    messages.extend(trimmed_history)
-    messages.append({"role": "user", "content": clean})
-
-    logger.info(
-        "[ai_service] Groq request | page=%s | history_turns=%d | msg='%s...'",
-        current_page, len(trimmed_history), clean[:60],
-    )
-
-    completion = _groq_client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=messages,
-        temperature=0.45,
-        max_tokens=280,
-        stream=False,
-    )
-
-    choices = completion.choices or []
-    raw_reply = ((choices[0].message.content if choices else "") or "").strip()
-    logger.info("[ai_service] Groq reply (%d chars): %s...", len(raw_reply), raw_reply[:80])
-
-    return _parse_navigation(raw_reply)
+                messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": message})
+    return messages
 
 
+# ── Streaming, tool-calling agent loop ─────────────────────────────────────────
+def stream_agent(
+    messages: List[Dict],
+    tool_executor: Callable[[str, dict], dict],
+    max_rounds: int = 4,
+) -> Iterator[dict]:
+    """
+    Run the agent, yielding UI events as they happen:
+
+      {"type": "token", "text": "..."}                     streamed answer text
+      {"type": "tool", "phase": "start", "name", "label"}  a tool is running
+      {"type": "tool_result", "tool", "result"}            rich result to render
+      {"type": "action", "action": "navigate", ...}        client should navigate
+
+    ``tool_executor(name, args)`` must return
+    ``{"for_model": str, "event": dict | None}``.
+    """
+    if _groq_client is None:
+        yield {"type": "token", "text": "The AI service isn't configured yet. Please set GROQ_API_KEY."}
+        return
+
+    for _round in range(max_rounds):
+        content_parts: List[str] = []
+        tool_calls: Dict[int, Dict[str, str]] = {}
+        streamed_any = False
+
+        # The whole round (create + iteration) is guarded: Groq can raise mid-stream
+        # (e.g. a transient "failed to call a function" tool-validation error), and we
+        # must degrade gracefully rather than propagate.
+        try:
+            stream = _groq_client.chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                tools=TOOLS,
+                tool_choice="auto",
+                temperature=0.4,
+                max_tokens=400,
+                stream=True,
+            )
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if getattr(delta, "content", None):
+                    content_parts.append(delta.content)
+                    streamed_any = True
+                    yield {"type": "token", "text": delta.content}
+                for tc in (getattr(delta, "tool_calls", None) or []):
+                    slot = tool_calls.setdefault(tc.index, {"id": "", "name": "", "args": ""})
+                    if tc.id:
+                        slot["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        slot["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        slot["args"] += tc.function.arguments
+        except Exception as exc:  # network / rate-limit / transient Groq tool-call errors
+            logger.error("[ai_service] stream round failed: %s", exc)
+            if not streamed_any:
+                rate_limited = "rate_limit" in str(exc).lower() or "429" in str(exc)
+                yield {
+                    "type": "token",
+                    "text": (
+                        "⚠️ The AI quota for today has run out, so I can't answer right now. "
+                        "It resets shortly — please try again in a few minutes."
+                        if rate_limited
+                        else "Sorry, I couldn't complete that just now. Please try again."
+                    ),
+                }
+            return
+
+        if not tool_calls:
+            return  # model produced a final natural-language answer (already streamed)
+
+        # Record the assistant turn that requested the tools.
+        messages.append({
+            "role": "assistant",
+            "content": "".join(content_parts) or None,
+            "tool_calls": [
+                {
+                    "id": slot["id"] or f"call_{idx}",
+                    "type": "function",
+                    "function": {"name": slot["name"], "arguments": slot["args"] or "{}"},
+                }
+                for idx, slot in tool_calls.items()
+            ],
+        })
+
+        # Execute each requested tool and feed the results back to the model.
+        for idx, slot in tool_calls.items():
+            name = slot["name"]
+            call_id = slot["id"] or f"call_{idx}"
+            yield {"type": "tool", "phase": "start", "name": name,
+                   "label": TOOL_LABELS.get(name, "Working")}
+            try:
+                args = json.loads(slot["args"]) if slot["args"].strip() else {}
+            except json.JSONDecodeError:
+                args = {}
+            try:
+                outcome = tool_executor(name, args) or {}
+            except Exception as exc:
+                logger.error("[ai_service] tool '%s' failed: %s", name, exc)
+                outcome = {"for_model": f"The {name} action failed. Tell the user briefly.", "event": None}
+
+            event = outcome.get("event")
+            if event:
+                yield event
+            messages.append({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "name": name,
+                "content": str(outcome.get("for_model", "")),
+            })
+        # loop again: the model now answers using the tool results (streamed)
+
+    # Safety valve: exhausted the tool-call budget without a final answer.
+    yield {"type": "token", "text": "Here's what I found — let me know if you'd like me to go deeper."}
+
+
+def run_agent(
+    messages: List[Dict],
+    tool_executor: Callable[[str, dict], dict],
+    max_rounds: int = 4,
+) -> dict:
+    """Non-streaming wrapper: drain ``stream_agent`` into a single response dict."""
+    text_parts: List[str] = []
+    action: Optional[dict] = None
+    tool_evt: Optional[dict] = None
+
+    for ev in stream_agent(messages, tool_executor, max_rounds=max_rounds):
+        etype = ev.get("type")
+        if etype == "token":
+            text_parts.append(ev.get("text", ""))
+        elif etype == "action":
+            action = ev
+        elif etype == "tool_result":
+            tool_evt = ev
+
+    response = "".join(text_parts).strip()
+    out: dict = {"response": response or "Done."}
+    if action:
+        out["response"] = response or action.get("response") or out["response"]
+        out["action"] = "navigate"
+        out["page"] = action.get("page")
+        out["url"] = action.get("url")
+    elif tool_evt:
+        out["action"] = "tool_result"
+        out["tool"] = tool_evt.get("tool")
+        out["result"] = tool_evt.get("result")
+    return out

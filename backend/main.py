@@ -1,9 +1,9 @@
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 import hashlib
 import json
 import logging
@@ -12,7 +12,7 @@ import os
 import random
 import re
 import sqlite3
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -28,9 +28,13 @@ logging.basicConfig(
 logger = logging.getLogger("salespark")
 
 try:
-    from backend.ai_service import generate_chat_response
+    from backend.ai_service import (
+        build_messages, build_pipeline_summary, stream_agent, run_agent, groq_ready,
+    )
 except ImportError:
-    from ai_service import generate_chat_response
+    from ai_service import (
+        build_messages, build_pipeline_summary, stream_agent, run_agent, groq_ready,
+    )
 
 try:
     from backend.phase2_ai import generate_json
@@ -82,11 +86,6 @@ class ScoreRequest(BaseModel):
     contact_email: Optional[str] = None
     deal_stage: Optional[str] = "Prospecting"
     notes: Optional[str] = None
-
-
-class AnalysisRequest(BaseModel):
-    industry: str
-    product: Optional[str] = ""
 
 
 class EmailRequest(BaseModel):
@@ -705,35 +704,6 @@ def get_all_leads():
     return {"leads": serialize_rows(rows)}
 
 
-@app.post("/market")
-def market_analysis_tool(req: AnalysisRequest):
-    industry = req.industry.strip() or "Technology"
-    product = (req.product or "your solution").strip() or "your solution"
-    baseline = INDUSTRY_BASELINES.get(industry.lower(), INDUSTRY_BASELINES["technology"])
-    fallback = {
-        "demand_insight": f"Demand remains solid for {industry} buyers seeking tools that reduce manual work and improve visibility.",
-        "competition_overview": f"Competition in {industry} is active, so differentiation should emphasize measurable outcomes over generic features.",
-        "opportunity_summary": f"{product} can win by focusing on faster execution, clear ROI, and targeted messaging for operational teams.",
-    }
-    ai_data = ai_or_fallback(
-        "market_tool",
-        {"industry": industry, "product": product},
-        "Return only JSON with keys: demand_insight, competition_overview, opportunity_summary.",
-        f"Analyze market demand, competition, and opportunity for industry={industry}, product={product}.",
-        fallback,
-    )
-    return {
-        "trend": ai_data["demand_insight"],
-        "demand": f"Demand Index {baseline['demand']}/100",
-        "competition": ai_data["competition_overview"],
-        "opportunity": ai_data["opportunity_summary"],
-        "demand_insight": ai_data["demand_insight"],
-        "competition_overview": ai_data["competition_overview"],
-        "opportunity_summary": ai_data["opportunity_summary"],
-        "ai_insight": ai_data["opportunity_summary"],
-    }
-
-
 @app.post("/social")
 def generate_social(req: ContentRequest):
     payload = {"product": req.product.strip(), "platform": req.platform.strip()}
@@ -953,48 +923,6 @@ def dashboard():
     return {"data_source": "Live Database" if snapshot["total_leads"] else "Empty Database", "metrics": metrics}
 
 
-@app.get("/recommendations")
-def recommendations():
-    snapshot = get_pipeline_snapshot()
-    if snapshot["avg_score"] < 50:
-        action = "Focus on lead quality improvement"
-        tip = "Average score is below target. Tighten qualification and use outreach focused on buyer pain points."
-    elif snapshot["hot_leads"] < 3:
-        action = "Increase hot lead pipeline"
-        tip = "There are too few hot leads. Prioritize high-intent accounts and launch a more targeted campaign."
-    else:
-        action = "Accelerate high-intent conversion"
-        tip = "The pipeline has enough hot leads to justify immediate outreach, demos, and tailored closing sequences."
-    return {"action": action, "tip": tip, "platform": "LinkedIn"}
-
-
-@app.get("/segments")
-def segments():
-    with db_conn() as conn:
-        cur = conn.cursor()
-        result = {
-            "high_value": cur.execute("SELECT COUNT(*) FROM leads WHERE score >= 80").fetchone()[0],
-            "high_intent": cur.execute("SELECT COUNT(*) FROM leads WHERE interest >= 8").fetchone()[0],
-            "price_sensitive": cur.execute("SELECT COUNT(*) FROM leads WHERE budget < 20000").fetchone()[0],
-            "low_intent": cur.execute("SELECT COUNT(*) FROM leads WHERE score < 40").fetchone()[0],
-        }
-    return result
-
-
-@app.get("/weekly-report")
-def weekly_report():
-    snapshot = get_pipeline_snapshot()
-    summary = (
-        f"This week: {snapshot['total_leads']} total leads, {snapshot['hot_leads']} hot leads, and an average score of {snapshot['avg_score']}/100. "
-    )
-    if snapshot["hot_leads"] >= 3:
-        summary += "Prioritize immediate outreach to your strongest opportunities."
-    elif snapshot["avg_score"] < 50:
-        summary += "Lead quality is below target, so improve targeting before scaling spend."
-    else:
-        summary += "Keep nurturing warm leads while building more high-intent demand."
-    return {"summary": summary, "generated_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M")}
-
 @app.get("/actions/next")
 def next_actions():
     with db_conn() as conn:
@@ -1185,15 +1113,6 @@ def followup_plan(req: FollowupRequest):
     log_interaction(req.lead_id, "followup_plan", result)
     return result
 
-NAVIGATION_PATTERNS = [
-    (re.compile(r"\b(open|show|go\s*to|take\s*me\s*to|back\s*to)\s+(home|landing|landing\s+page|index)\b", re.IGNORECASE), "home"),
-    (re.compile(r"\b(open|show|go to|take me to)\s+(sales\s+)?copilot\b", re.IGNORECASE), "sales_copilot"),
-    (re.compile(r"\b(open|show|go to|take me to)\s+(my\s+)?leads?\b", re.IGNORECASE), "leads"),
-    (re.compile(r"\b(open|show|go to|take me to)\s+(tools?|campaign generator)\b", re.IGNORECASE), "tools"),
-    (re.compile(r"\b(open|show|go to|take me to)\s+(prediction|prediction page|campaign prediction)\b", re.IGNORECASE), "prediction"),
-    (re.compile(r"\b(open|show|go to|take me to)\s+(market|market insights|market intelligence)\b", re.IGNORECASE), "market"),
-]
-
 NAVIGATION_URLS = {
     "home": "index.html",
     "sales_copilot": "sales_copilot.html",
@@ -1258,252 +1177,333 @@ def _page_suggestions(current_page: str, db_context: Dict[str, Any]) -> List[str
     ]
 
 
-def _detect_navigation_intent(message: str) -> Optional[str]:
-    for pattern, page_key in NAVIGATION_PATTERNS:
-        if pattern.search(message):
-            return page_key
-    return None
-
-
-def _safe_product_from_message(message: str, default_value: str = "your product") -> str:
-    match = re.search(r"for\s+([a-z0-9 .&-]+?)(?:\s+targeting|\s+on|\s+using|$)", message, re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    return default_value
-
-
-def _safe_audience_from_message(message: str, default_value: str = "startup buyers") -> str:
-    match = re.search(r"targeting\s+([a-z0-9 .&-]+?)(?:\s+on|\s+with|$)", message, re.IGNORECASE)
-    if match:
-        return match.group(1).strip()
-    return default_value
-
-
-def _tool_execution_from_message(message: str, current_page: str, db_context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    clean = message.strip()
-    low = clean.lower()
-
-    if re.search(r"\b(create|generate|build)\b.*\bcampaign\b", low):
-        product = _safe_product_from_message(clean, "SaaS product")
-        audience = _safe_audience_from_message(clean, "startup teams")
-        req = CampaignRequest(product=product, audience=audience, platform="LinkedIn", goal="Leads")
-        result = generate_campaign(req)
-        return {
-            "response": (
-                f"Campaign created for {product}. Theme: {result['theme']}. "
-                f"CTA: {result['cta']}. Expected outcome: {result['outcome']}"
-            ),
-            "action": "tool_result",
-            "tool": "generate_campaign",
-            "result": result,
-            "suggestions": _page_suggestions(current_page, db_context),
-        }
-
-    if re.search(r"\b(write|generate|draft)\b.*\b(email|cold email|outreach)\b", low):
-        product = _safe_product_from_message(clean, "SalesSparkAI")
-        target = _safe_audience_from_message(clean, "SaaS founders")
-        req = EmailRequest(recipient=target.title(), product=product, context=f"improving pipeline conversion for {target}")
-        result = generate_email(req)
-        return {
-            "response": f"Outreach email drafted for {target}. Subject: {result['subject']}",
-            "action": "tool_result",
-            "tool": "generate_email",
-            "result": result,
-            "suggestions": _page_suggestions(current_page, db_context),
-        }
-
-    if re.search(r"\b(generate|create|write)\b.*\bpitch\b", low):
-        product = _safe_product_from_message(clean, "SalesSparkAI")
-        target = _safe_audience_from_message(clean, "SaaS buyers")
-        req = PitchRequest(product=product, target=target)
-        result = generate_pitch(req)
-        return {
-            "response": f"Sales pitch generated for {product} targeting {target}.",
-            "action": "tool_result",
-            "tool": "generate_pitch",
-            "result": result,
-            "suggestions": _page_suggestions(current_page, db_context),
-        }
-
-    if re.search(r"\b(analy[sz]e|review|check)\b.*\bleads?\b", low):
-        top = db_context.get("top_leads", [])
-        top_line = ""
-        if top:
-            lead = top[0]
-            top_line = f" Top lead: {lead['company']} ({lead['score']}/100, {lead['category']})."
-        return {
-            "response": _pipeline_brief(db_context) + top_line,
-            "action": "tool_result",
-            "tool": "analyze_leads",
-            "result": {
-                "pipeline": db_context,
-                "top_lead": top[0] if top else None,
-            },
-            "suggestions": _page_suggestions(current_page, db_context),
-        }
-
-    return None
-
-
-def _lead_intelligence_from_message(message: str, current_page: str, db_context: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    low = message.lower()
-    top = db_context.get("top_leads", [])
-    top_lead = top[0] if top else None
-
-    if re.search(r"\b(which|what)\b.*\blead\b.*\b(focus|prioriti[sz]e|target)\b", low):
-        if not top_lead:
-            return {
-                "response": "No leads are available yet. Add leads first and I can prioritize the best opportunity.",
-                "suggestions": _page_suggestions(current_page, db_context),
-            }
-        return {
-            "response": (
-                f"Your highest priority lead is {top_lead['company']} with a score of {top_lead['score']}. "
-                "I recommend scheduling a product demo and leading with ROI benefits."
-            ),
-            "suggestions": _page_suggestions(current_page, db_context),
-        }
-
-    if "help me close more deals" in low or "close more deals" in low:
-        actions = []
-        if top_lead:
-            actions.append(f"1. Prioritize {top_lead['company']} ({top_lead['score']}/100) for immediate contact.")
-        actions.append("2. Generate personalized outreach for top hot and warm leads.")
-        actions.append("3. Schedule day 1 / day 3 / day 7 follow-up sequence for warm leads.")
-        actions.append("4. Use deal closure assistant to refine objection handling and next steps.")
-        return {
-            "response": "Here is a deal-closing workflow based on your current pipeline:\n" + "\n".join(actions),
-            "action": "multi_step",
-            "steps": actions,
-            "suggestions": _page_suggestions(current_page, db_context),
-        }
-
-    if re.search(r"\b(how many|pipeline|hot leads|warm leads|cold leads|average score)\b", low):
-        return {
-            "response": _pipeline_brief(db_context),
-            "suggestions": _page_suggestions(current_page, db_context),
-        }
-
-    return None
-
-
-def _page_guidance_from_message(message: str, current_page: str) -> Optional[str]:
-    if not re.search(r"\b(how do i|how to|guide me|what can i do here)\b", message.lower()):
+def _resolve_lead(identifier: Any) -> Optional[sqlite3.Row]:
+    """Find a lead by id or company name. The agent speaks in names, the DB in ids."""
+    if identifier is None or identifier == "":
         return None
+    with db_conn() as conn:
+        cur = conn.cursor()
+        text = str(identifier).strip()
+        if text.isdigit():
+            row = cur.execute("SELECT * FROM leads WHERE id = ?", (int(text),)).fetchone()
+            if row:
+                return row
+        row = cur.execute(
+            "SELECT * FROM leads WHERE company = ? COLLATE NOCASE", (text,)
+        ).fetchone()
+        if row:
+            return row
+        return cur.execute(
+            "SELECT * FROM leads WHERE company LIKE ? COLLATE NOCASE ORDER BY score DESC LIMIT 1",
+            (f"%{text}%",),
+        ).fetchone()
 
-    page = _normalize_page(current_page)
-    if page == "tools":
-        return "You are on the Tools page. Enter product and audience details, then run campaign, pitch, email, or social generators from each card."
-    if page == "leads":
-        return "You are on the Leads page. Review lead scores, then use Deal Closure Assistant and Follow-up Planner for prioritized actions."
-    if page == "prediction":
-        return "You are on the Prediction page. Choose platform and goal, run prediction, then use the reasoning and suggestions to improve campaign setup."
-    if page == "market":
-        return "You are on the Market Intelligence page. Select industry, region, and horizon, then analyze demand, competition, and opportunity outputs."
-    if page == "sales_copilot":
-        return "You are on the Sales Copilot page. Track KPI cards, inspect momentum and alerts, and use Next Best Actions to prioritize outreach."
-    return None
+
+def _lead_not_found(identifier: Any) -> Dict[str, Any]:
+    with db_conn() as conn:
+        names = [
+            r["company"]
+            for r in conn.cursor().execute(
+                "SELECT company FROM leads ORDER BY score DESC LIMIT 5"
+            ).fetchall()
+        ]
+    known = ", ".join(names) if names else "none yet"
+    return {
+        "for_model": (
+            f"No lead matches '{identifier}'. Ask the user which lead they mean. "
+            f"Leads in the pipeline include: {known}."
+        ),
+        "event": None,
+    }
+
+
+def execute_chat_tool(name: str, args: Dict[str, Any], current_page: str, db_context: Dict[str, Any]) -> Dict[str, Any]:
+    """Run a tool the AI agent requested. Returns {"for_model": str, "event": dict|None}.
+
+    ``for_model`` is fed back to the model so it can narrate the result; ``event``
+    (when present) is streamed to the browser to render a rich card or navigate.
+    """
+    if name == "navigate_to_page":
+        page = _normalize_page(args.get("page", ""))
+        url = NAVIGATION_URLS.get(page)
+        if not url:
+            return {"for_model": "That page isn't available in the app.", "event": None}
+        label = page.replace("_", " ").title()
+        return {
+            "for_model": f"Opened the {label} page for the user.",
+            "event": {
+                "type": "action", "action": "navigate", "page": page, "url": url,
+                "response": f"Opening {label}…",
+            },
+        }
+
+    if name == "analyze_pipeline":
+        brief = _pipeline_brief(db_context)
+        top = db_context.get("top_leads") or []
+        if top:
+            t = top[0]
+            brief += f" Top lead: {t['company']} ({t['score']}/100, {t['category']})."
+        brief += f" Pipeline health: {db_context.get('pipeline_health', 'Unknown')}."
+        return {"for_model": brief, "event": None}
+
+    if name == "get_next_actions":
+        data = next_actions()
+        actions = data.get("actions", [])
+        if not actions:
+            return {"for_model": data.get("message", "No leads yet, so there are no prioritized actions."), "event": None}
+        summary = "; ".join(f"{a['company']}: {a['action']}" for a in actions[:5])
+        return {
+            "for_model": f"Prioritized next actions -> {summary}",
+            "event": {"type": "tool_result", "tool": "next_actions", "result": data},
+        }
+
+    if name == "generate_campaign":
+        result = generate_campaign(CampaignRequest(
+            product=(args.get("product") or "your product"),
+            audience=(args.get("audience") or "your target buyers"),
+            platform=(args.get("platform") or "LinkedIn"),
+            goal=(args.get("goal") or "Leads"),
+        ))
+        return {
+            "for_model": f"Campaign ready. Theme: {result['theme']}. Strategy: {result['marketing_strategy']}. CTA: {result['cta']}.",
+            "event": {"type": "tool_result", "tool": "generate_campaign", "result": result},
+        }
+
+    if name == "draft_email":
+        result = generate_email(EmailRequest(
+            recipient=(args.get("recipient") or "there"),
+            product=(args.get("product") or "SalesSparkAI"),
+            context=(args.get("context") or "improving pipeline conversion"),
+        ))
+        return {
+            "for_model": f"Email drafted. Subject: {result['subject']}.",
+            "event": {"type": "tool_result", "tool": "generate_email", "result": result},
+        }
+
+    if name == "generate_pitch":
+        result = generate_pitch(PitchRequest(
+            product=(args.get("product") or "SalesSparkAI"),
+            target=(args.get("target") or "sales teams"),
+        ))
+        return {
+            "for_model": f"Pitch ready. Opening hook: {result['opening_hook']}.",
+            "event": {"type": "tool_result", "tool": "generate_pitch", "result": result},
+        }
+
+    if name == "get_market_intelligence":
+        result = market_intelligence_analysis(MarketAnalysisRequest(
+            industry=(args.get("industry") or "saas"),
+            region=(args.get("region") or "Global"),
+            time_horizon=(args.get("time_horizon") or "Mid"),
+        ))
+        return {
+            "for_model": (
+                f"Market read -> {result['demand_level']} {result['market_trend_summary']} "
+                f"Opportunity: {result['opportunity_insights']}"
+            ),
+            "event": {"type": "tool_result", "tool": "analyze_market", "result": result},
+        }
+
+    if name == "list_leads":
+        category = (args.get("category") or "").strip().title()
+        limit = min(int(args.get("limit") or 5), 10)
+        sql = "SELECT id, company, score, category, deal_stage, industry FROM leads"
+        params: tuple = ()
+        if category in ("Hot", "Warm", "Cold"):
+            sql += " WHERE category = ?"
+            params = (category,)
+        sql += " ORDER BY score DESC LIMIT ?"
+        with db_conn() as conn:
+            rows = conn.cursor().execute(sql, params + (limit,)).fetchall()
+        if not rows:
+            return {"for_model": f"No {category or ''} leads found.".strip(), "event": None}
+        leads = [dict(r) for r in rows]
+        listing = "; ".join(
+            f"{r['company']} ({r['score']}/100, {r['category']}, {r['deal_stage'] or 'Prospecting'})"
+            for r in leads
+        )
+        return {
+            "for_model": f"Leads -> {listing}",
+            "event": {"type": "tool_result", "tool": "list_leads", "result": {"leads": leads}},
+        }
+
+    if name == "score_lead":
+        company = (args.get("company") or "").strip()
+        try:
+            result = score_lead(ScoreRequest(
+                company=company,
+                budget=int(args.get("budget") or 0),
+                interest=int(args.get("interest") or 5),
+                industry=args.get("industry"),
+                region=args.get("region"),
+            ))
+        except (ValidationError, ValueError, TypeError):
+            return {
+                "for_model": (
+                    "Scoring needs a company name, a budget in dollars, and an interest level "
+                    "from 1-10. Ask the user for whatever is missing."
+                ),
+                "event": None,
+            }
+        result["company"] = company
+        return {
+            "for_model": f"Scored {company}: {result['score']}/100 ({result['category']}). {result['recommendation']}",
+            "event": {"type": "tool_result", "tool": "score_lead", "result": result},
+        }
+
+    if name == "get_deal_strategy":
+        row = _resolve_lead(args.get("company"))
+        if not row:
+            return _lead_not_found(args.get("company"))
+        result = deal_assist(DealAssistRequest(lead_id=row["id"]))
+        result["company"] = row["company"]
+        return {
+            "for_model": (
+                f"Closing plan for {row['company']} ({result['urgency_level']} urgency): "
+                f"{result['closing_strategy']} Next step: {result['recommended_next_step']}"
+            ),
+            "event": {"type": "tool_result", "tool": "deal_strategy", "result": result},
+        }
+
+    if name == "get_followup_plan":
+        row = _resolve_lead(args.get("company"))
+        if not row:
+            return _lead_not_found(args.get("company"))
+        result = followup_plan(FollowupRequest(lead_id=row["id"]))
+        result["company"] = row["company"]
+        steps = "; ".join(f"{k}: {v}" for k, v in (result.get("plan") or {}).items())
+        return {
+            "for_model": f"Follow-up plan for {row['company']} -> {steps}",
+            "event": {"type": "tool_result", "tool": "followup_plan", "result": result},
+        }
+
+    if name == "predict_campaign":
+        result = predict_campaign(PredictionRequest(
+            platform=(args.get("platform") or "LinkedIn"),
+            goal=(args.get("goal") or "Leads"),
+        ))
+        return {
+            "for_model": (
+                f"Prediction -> engagement {result['engagement_prob']}%, conversion "
+                f"{result['conversion_prob']}%, risk {result['risk_level']}. {result['reasoning']}"
+            ),
+            "event": {"type": "tool_result", "tool": "predict_campaign", "result": result},
+        }
+
+    if name == "generate_social":
+        result = generate_social(ContentRequest(
+            product=(args.get("product") or "SalesSparkAI"),
+            platform=(args.get("platform") or "LinkedIn"),
+        ))
+        return {
+            "for_model": f"Social post drafted for {args.get('platform') or 'LinkedIn'}.",
+            "event": {"type": "tool_result", "tool": "generate_social", "result": result},
+        }
+
+    return {"for_model": f"Unknown tool '{name}'.", "event": None}
+
+
+# The model occasionally answers a data question by navigating (e.g. "how is my
+# pipeline?" -> opens Leads). Navigation is disruptive and hard to undo, so we
+# only honour it when the user actually asked to be taken somewhere.
+NAV_REQUEST_RE = re.compile(
+    r"\b(open|show|go\s*to|goto|take\s*me|navigate|bring\s*up|switch\s*to|view|see|visit|"
+    r"back\s*to|jump\s*to|launch)\b",
+    re.IGNORECASE,
+)
+
+
+def _wants_navigation(message: str) -> bool:
+    return bool(NAV_REQUEST_RE.search(message or ""))
+
+
+def _chat_executor(message: str, current_page: str, db_context: Dict[str, Any]) -> Callable[[str, dict], dict]:
+    def _run(name: str, args: dict) -> dict:
+        if name == "navigate_to_page" and not _wants_navigation(message):
+            return {
+                "for_model": (
+                    "Do NOT navigate — the user asked a question, they did not ask to open a page. "
+                    "Answer them in the chat instead, using analyze_pipeline if you need their data."
+                ),
+                "event": None,
+            }
+        return execute_chat_tool(name, args, current_page, db_context)
+    return _run
+
+
+def _sse(obj: Dict[str, Any]) -> str:
+    return f"data: {json.dumps(obj)}\n\n"
+
+
 @app.post("/chat")
 def chat_assistant(req: ChatRequest):
+    """Non-streaming chat: runs the tool-calling agent and returns a final dict.
+
+    Kept as a graceful fallback for clients that cannot consume the SSE stream.
+    """
     user_message = (req.message or "").strip()
     if not user_message:
         return {"error": "Message must not be empty."}
 
     db_context = get_pipeline_snapshot()
     current_page = req.current_page or "unknown"
-
-    nav_page = _detect_navigation_intent(user_message)
-    if nav_page:
-        return {
-            "response": f"Opening the {nav_page.replace('_', ' ').title()} page.",
-            "action": "navigate",
-            "page": nav_page,
-            "url": NAVIGATION_URLS[nav_page],
-            "suggestions": _page_suggestions(current_page, db_context),
-        }
-
-    tool_result = _tool_execution_from_message(user_message, current_page, db_context)
-    if tool_result:
-        return tool_result
-
-    lead_intel = _lead_intelligence_from_message(user_message, current_page, db_context)
-    if lead_intel:
-        return lead_intel
-
-    page_guidance = _page_guidance_from_message(user_message, current_page)
-    if page_guidance:
-        return {
-            "response": page_guidance,
-            "suggestions": _page_suggestions(current_page, db_context),
-        }
+    suggestions = _page_suggestions(current_page, db_context)
 
     try:
-        ai_result = generate_chat_response(
-            message=user_message,
-            db_context=db_context,
-            current_page=current_page,
-            history=req.history or [],
-        )
-
-        if ai_result.get("action") == "navigate":
-            page = (ai_result.get("page") or "").lower()
-            mapping = {
-                "home": "home",
-                "landing": "home",
-                "index": "home",
-                "index.html": "home",
-                "copilot": "sales_copilot",
-                "campaigns": "tools",
-                "market": "market",
-                "prediction": "prediction",
-                "leads": "leads",
-                "tools": "tools",
-                "dashboard": "sales_copilot",
-            }
-            normalized_page = mapping.get(page, page)
-            if normalized_page in NAVIGATION_URLS:
-                ai_result["page"] = normalized_page
-                ai_result["url"] = NAVIGATION_URLS[normalized_page]
-
-        if "suggestions" not in ai_result:
-            ai_result["suggestions"] = _page_suggestions(current_page, db_context)
-
-        return ai_result
-
-    except ValueError as exc:
-        return {"error": str(exc)}
+        pipeline_summary = build_pipeline_summary(db_context)
+        messages = build_messages(user_message, pipeline_summary, current_page, req.history or [])
+        result = run_agent(messages, _chat_executor(user_message, current_page, db_context))
     except Exception as exc:
-        logger.error("[CHAT] Groq error (%s): %s", type(exc).__name__, exc)
-        return {
-            "response": "I'm here to help with SalesSparkAI features like lead analysis, campaign generation, and sales strategy.",
-            "suggestions": _page_suggestions(current_page, db_context),
-        }
+        logger.error("[CHAT] %s: %s", type(exc).__name__, exc)
+        result = {"response": "I'm here to help with leads, campaigns, and sales strategy. What would you like to do?"}
+
+    result.setdefault("suggestions", suggestions)
+    return result
 
 
-@app.get("/chat/test")
-def chat_test():
-    api_key = os.getenv("GROQ_API_KEY", "").strip()
-    if not api_key:
-        return {"status": "error", "reason": "GROQ_API_KEY is empty. Check your .env file."}
-    try:
-        result = generate_chat_response(
-            message="Hello, who are you?",
-            db_context=get_pipeline_snapshot(),
-            current_page="test",
-            history=[],
-        )
-        return {
-            "status": "ok",
-            "model": "llama-3.3-70b-versatile",
-            "test_response": result,
-        }
-    except Exception as exc:
-        return {"status": "error", "error_type": type(exc).__name__, "error_detail": str(exc)}
+@app.post("/chat/stream")
+def chat_stream(req: ChatRequest):
+    """Streaming chat over Server-Sent Events.
+
+    Emits newline-delimited ``data: {json}`` events of type:
+      token | tool | tool_result | action | suggestions | done
+    """
+    user_message = (req.message or "").strip()
+    db_context = get_pipeline_snapshot()
+    current_page = req.current_page or "unknown"
+    suggestions = _page_suggestions(current_page, db_context)
+    history = req.history or []
+
+    def event_stream():
+        if not user_message:
+            yield _sse({"type": "token", "text": "Please type a message."})
+            yield _sse({"type": "done"})
+            return
+        try:
+            pipeline_summary = build_pipeline_summary(db_context)
+            messages = build_messages(user_message, pipeline_summary, current_page, history)
+            for ev in stream_agent(messages, _chat_executor(user_message, current_page, db_context)):
+                yield _sse(ev)
+        except Exception as exc:
+            logger.error("[CHAT_STREAM] %s: %s", type(exc).__name__, exc)
+            yield _sse({"type": "token", "text": "Sorry, I hit an error. Please try again."})
+        yield _sse({"type": "suggestions", "items": suggestions})
+        yield _sse({"type": "done"})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/health")
 def health():
-    return {"status": "SalesSpark AI Backend Running", "version": "4.0"}
+    return {
+        "status": "SalesSpark AI Backend Running",
+        "version": "4.0",
+        "ai_ready": groq_ready(),
+    }
 
 
 @app.get("/", include_in_schema=False)

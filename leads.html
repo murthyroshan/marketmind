@@ -134,14 +134,16 @@
     </footer>
 
     <script src="js/app.js"></script>
-    <script src="js/generators.js"></script>
     <script src="js/deal_tools.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', async () => {
             try {
-                const res = await fetch('http://127.0.0.1:8000/leads');
+                const res = await fetch(`${API_BASE}/leads`);
                 const data = await res.json();
                 const tbody = document.getElementById('leads-table-body');
+
+                // One fetch feeds both the table and the deal-tools dropdown.
+                populateLeadsDropdown(data.leads);
 
                 if (!data.leads || data.leads.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="8" style="padding: 20px; text-align: center;">No leads found.</td></tr>';
@@ -168,6 +170,11 @@
                 }).join('');
             } catch (e) {
                 document.getElementById('leads-table-body').innerHTML = '<tr><td colspan="8" style="color: #f87171; padding: 20px; text-align: center;">Error loading leads.</td></tr>';
+                const status = document.getElementById('lead-selector-status');
+                if (status) {
+                    status.innerHTML = 'Failed to load leads. Ensure backend is running.';
+                    status.style.color = 'var(--error)';
+                }
             }
         });
     </script>

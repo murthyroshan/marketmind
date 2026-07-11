@@ -1,13 +1,6 @@
 const API = 'http://127.0.0.1:8000';
 
-function escapeHtml(value) {
-    return String(value == null ? '' : value)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
+// escapeHtml() comes from app.js, which every page loads first.
 
 document.addEventListener('DOMContentLoaded', async () => {
     await Promise.allSettled([

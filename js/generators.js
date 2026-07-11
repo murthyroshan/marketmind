@@ -1,4 +1,4 @@
-const API_BASE = "http://127.0.0.1:8000";
+// API_BASE comes from js/app.js, which every page loads first.
 
 function showOutput(elementId, content, insight = "") {
     const el = document.getElementById(elementId);
@@ -100,8 +100,8 @@ async function scoreLead() {
 
 async function analyzeMarket() {
     try {
-        const payload = { industry: document.getElementById('mA_industry').value || "Tech" };
-        const res = await fetch(`${API_BASE}/market`, {
+        const payload = { industry: document.getElementById('mA_industry').value || "saas" };
+        const res = await fetch(`${API_BASE}/market/analyze`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -109,12 +109,12 @@ async function analyzeMarket() {
         if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json();
         const content = `
-            <strong>Demand Insight:</strong> ${data.demand_insight || data.trend}<br>
-            <strong>Demand Level:</strong> ${data.demand}<br>
-            <strong>Competition Overview:</strong> ${data.competition_overview || data.competition}<br>
-            <strong>Opportunity Summary:</strong> ${data.opportunity_summary || data.opportunity}
+            <strong>Demand Insight:</strong> ${data.market_trend_summary}<br>
+            <strong>Demand Level:</strong> ${data.demand_level}<br>
+            <strong>Competition Overview:</strong> ${data.competition_overview}<br>
+            <strong>Opportunity Summary:</strong> ${data.opportunity_insights}
         `;
-        showOutput('mA_output', content, data.ai_insight);
+        showOutput('mA_output', content, data.insight);
     } catch (e) {
         console.error(e);
         showOutput('mA_output', "<b style='color:red'>Backend Error: Ensure server is running!</b>");
