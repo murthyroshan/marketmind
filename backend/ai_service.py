@@ -370,9 +370,15 @@ def stream_agent(
     ``tool_executor(name, args)`` must return
     ``{"for_model": str, "event": dict | None}``.
     """
+    # "unavailable" tells the caller the model never answered, so it can fall back
+    # to the deterministic path. It is only safe to emit while nothing has been
+    # streamed and no tool has run — replaying a turn that already executed a
+    # writing tool would run it twice.
     if _groq_client is None:
-        yield {"type": "token", "text": "The AI service isn't configured yet. Please set GROQ_API_KEY."}
+        yield {"type": "unavailable", "reason": "unconfigured"}
         return
+
+    tool_ran = False
 
     for _round in range(max_rounds):
         content_parts: List[str] = []
@@ -410,17 +416,29 @@ def stream_agent(
                         slot["args"] += tc.function.arguments
         except Exception as exc:  # network / rate-limit / transient Groq tool-call errors
             logger.error("[ai_service] stream round failed: %s", exc)
-            if not streamed_any:
+            if streamed_any:
+                return
+            if not tool_ran:
                 rate_limited = "rate_limit" in str(exc).lower() or "429" in str(exc)
-                yield {
-                    "type": "token",
-                    "text": (
-                        "⚠️ The AI quota for today has run out, so I can't answer right now. "
-                        "It resets shortly — please try again in a few minutes."
-                        if rate_limited
-                        else "Sorry, I couldn't complete that just now. Please try again."
-                    ),
-                }
+                yield {"type": "unavailable",
+                       "reason": "rate_limit" if rate_limited else "error"}
+                return
+            # Tools already ran, so we must not replay the turn — but their results are
+            # sitting in `messages` and the model died before summarising them. Hand the
+            # user the raw result rather than a bare "Done.".
+            last = next(
+                (m.get("content") for m in reversed(messages)
+                 if m.get("role") == "tool" and m.get("content")),
+                "",
+            )
+            yield {
+                "type": "token",
+                "text": (
+                    f"{last}\n\n_The AI ran out of quota before it could summarise this, "
+                    "so that's the raw result._"
+                    if last else "Sorry, I couldn't complete that just now. Please try again."
+                ),
+            }
             return
 
         if not tool_calls:
@@ -450,6 +468,7 @@ def stream_agent(
                 args = json.loads(slot["args"]) if slot["args"].strip() else {}
             except json.JSONDecodeError:
                 args = {}
+            tool_ran = True
             try:
                 outcome = tool_executor(name, args) or {}
             except Exception as exc:
@@ -479,7 +498,13 @@ def run_agent(
     """Non-streaming wrapper: drain ``stream_agent`` into a single response dict."""
     text_parts: List[str] = []
     action: Optional[dict] = None
-    tool_evt: Optional[dict] = None
+    # Every tool the turn ran, not just the last one. A turn can call several
+    # (list_leads then draft_email), and it can navigate *and* generate an asset —
+    # keeping one, or dropping them all when navigating, silently loses cards the
+    # streaming path renders.
+    tool_evts: List[dict] = []
+
+    unavailable: Optional[str] = None
 
     for ev in stream_agent(messages, tool_executor, max_rounds=max_rounds):
         etype = ev.get("type")
@@ -488,17 +513,22 @@ def run_agent(
         elif etype == "action":
             action = ev
         elif etype == "tool_result":
-            tool_evt = ev
+            tool_evts.append(ev)
+        elif etype == "unavailable":
+            unavailable = ev.get("reason") or "error"
+
+    if unavailable:
+        return {"unavailable": unavailable}
 
     response = "".join(text_parts).strip()
     out: dict = {"response": response or "Done."}
+    if tool_evts:
+        out["tools"] = [
+            {"tool": e.get("tool"), "result": e.get("result")} for e in tool_evts
+        ]
     if action:
         out["response"] = response or action.get("response") or out["response"]
         out["action"] = "navigate"
         out["page"] = action.get("page")
         out["url"] = action.get("url")
-    elif tool_evt:
-        out["action"] = "tool_result"
-        out["tool"] = tool_evt.get("tool")
-        out["result"] = tool_evt.get("result")
     return out
