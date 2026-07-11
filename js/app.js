@@ -296,10 +296,418 @@ function downloadCard(btn) {
     URL.revokeObjectURL(url);
 }
 
+// ── Live status strip ───────────────────────────────────────────────────────────
+// The ticker across the top of every page. Numbers count up rather than snapping,
+// so the terminal reads as live instrumentation instead of static text.
+function countUp(el, target, suffix = '') {
+    if (!el) return;
+    const value = Number(target);
+    if (!isFinite(value)) { el.textContent = String(target); return; }
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        el.textContent = value + suffix;
+        return;
+    }
+    const duration = 650;
+    const start = performance.now();
+    const step = (now) => {
+        const p = Math.min(1, (now - start) / duration);
+        const eased = 1 - Math.pow(1 - p, 3);
+        const current = value % 1 ? (value * eased).toFixed(1) : Math.round(value * eased);
+        el.textContent = current + suffix;
+        if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+}
+
+async function loadStatusStrip() {
+    const strip = document.getElementById('statusStrip');
+    if (!strip) return;
+    try {
+        const res = await fetch(`${API_BASE}/dashboard`);
+        if (!res.ok) throw new Error('offline');
+        const m = (await res.json()).metrics || {};
+        countUp(document.getElementById('st-total'), m.total_leads);
+        countUp(document.getElementById('st-hot'), m.hot_leads);
+        countUp(document.getElementById('st-warm'), m.warm_leads);
+        countUp(document.getElementById('st-avg'), m.avg_lead_score);
+        const health = document.getElementById('st-health');
+        if (health) health.textContent = (m.lead_quality_trend || '—').toUpperCase();
+    } catch (e) {
+        strip.querySelectorAll('b').forEach(b => { b.textContent = '—'; });
+        const live = strip.querySelector('.status-live');
+        if (live) live.style.background = 'var(--hot)';
+        const first = strip.querySelector('.status-item');
+        if (first) first.lastChild.textContent = ' OFFLINE';
+    }
+}
+
+// ── Live board (home page) ──────────────────────────────────────────────────────
+async function loadBoard() {
+    const board = document.getElementById('dist');
+    const canvas = document.getElementById('heroCanvas');
+    if (!board && !canvas) return;
+    try {
+        const [dashRes, leadsRes] = await Promise.all([
+            fetch(`${API_BASE}/dashboard`),
+            fetch(`${API_BASE}/leads`),
+        ]);
+        const m = (await dashRes.json()).metrics || {};
+        const leads = (await leadsRes.json()).leads || [];
+
+        drawHeroChart(leads);
+        buildTicker(leads);
+
+        // Pipeline value = the money actually sitting in the book.
+        const value = leads.reduce((sum, l) => sum + (Number(l.budget) || 0), 0);
+        const valueEl = document.getElementById('pv-value');
+        if (valueEl) {
+            const fmt = (n) => '$' + Math.round(n).toLocaleString();
+            animate(0, value, 900, (v) => { valueEl.textContent = fmt(v); });
+        }
+        setText('pv-sub', `${m.total_leads || 0} leads · avg ${m.avg_lead_score || 0}/100 · ${m.total_campaigns || 0} campaigns`);
+
+        const delta = document.getElementById('pv-delta');
+        if (delta) {
+            const trend = m.lead_quality_trend || 'Stable';
+            delta.textContent = trend === 'Improving' ? '▲ IMPROVING'
+                : trend === 'Needs Attention' ? '▼ NEEDS ATTENTION' : '■ STABLE';
+            delta.className = 'board-delta ' + (trend === 'Improving' ? 'up' : trend === 'Needs Attention' ? 'down' : '');
+        }
+
+        const total = Math.max(1, m.total_leads || 0);
+        [['hot', m.hot_leads], ['warm', m.warm_leads], ['cold', m.cold_leads]].forEach(([k, n]) => {
+            const count = n || 0;
+            const pct = Math.round((count / total) * 100);
+            countUp(document.getElementById('d-' + k), count);
+            setText('p-' + k, pct + '%');
+            const bar = document.getElementById('b-' + k);
+            if (bar) requestAnimationFrame(() => { bar.style.width = pct + '%'; });
+        });
+
+        const top = document.getElementById('top-leads');
+        if (top) {
+            const best = leads.slice(0, 5);
+            top.innerHTML = best.length ? best.map(l => {
+                const cat = (l.category || 'Cold').toLowerCase();
+                return `<a class="top-lead" href="leads.html">
+                    <span>
+                        <span class="top-lead-co">${escapeHtml(l.company || '—')}</span>
+                        <span class="top-lead-meta">${escapeHtml(l.deal_stage || 'Prospecting')} · ${escapeHtml(l.category)}</span>
+                    </span>
+                    <span class="top-lead-score" style="color:var(--${cat})">${escapeHtml(l.score)}</span>
+                </a>`;
+            }).join('') : '<div class="panel-empty">No leads yet</div>';
+        }
+    } catch (e) {
+        setText('pv-value', '—');
+        setText('pv-sub', 'Backend offline');
+        const top = document.getElementById('top-leads');
+        if (top) top.innerHTML = '<div class="panel-empty">Backend offline</div>';
+    }
+}
+
+function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+}
+
+function animate(from, to, duration, onFrame) {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return onFrame(to);
+    const start = performance.now();
+    const step = (now) => {
+        const p = Math.min(1, (now - start) / duration);
+        onFrame(from + (to - from) * (1 - Math.pow(1 - p, 3)));
+        if (p < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+}
+
+// ── Atmosphere layers ───────────────────────────────────────────────────────────
+// Behind the content: a drifting ghost market (canvas), a spotlight that tracks
+// the cursor, HUD chrome at the viewport corners, grain, and a vignette.
+function initAtmosphere() {
+    ['bgfx', 'spotlight', 'hud', 'grain', 'vignette'].forEach(cls => {
+        if (document.querySelector('.' + cls)) return;
+        const el = document.createElement(cls === 'bgfx' ? 'canvas' : 'div');
+        el.className = cls;
+        if (cls === 'hud') {
+            el.innerHTML = '<i class="hud-tl"></i><i class="hud-tr"></i><i class="hud-bl"></i><i class="hud-br"></i>';
+        }
+        document.body.appendChild(el);
+    });
+    initSpotlight();
+    initGhostMarket();
+}
+
+function initSpotlight() {
+    const el = document.querySelector('.spotlight');
+    if (!el || window.matchMedia('(pointer: coarse)').matches) return;
+    let raf = null, x = 0, y = 0;
+    window.addEventListener('mousemove', (e) => {
+        x = e.clientX; y = e.clientY;
+        if (raf) return;
+        raf = requestAnimationFrame(() => {
+            el.style.setProperty('--mx', x + 'px');
+            el.style.setProperty('--my', y + 'px');
+            el.style.opacity = '1';
+            raf = null;
+        });
+    });
+}
+
+// A slow, layered market drifting behind the page. Deterministic pseudo-noise,
+// no library, ~60fps, pauses when the tab is hidden.
+function initGhostMarket() {
+    const canvas = document.querySelector('.bgfx');
+    if (!canvas) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const ctx = canvas.getContext('2d');
+
+    let W = 0, H = 0, dpr = Math.min(2, window.devicePixelRatio || 1);
+    function size() {
+        W = canvas.clientWidth;
+        H = canvas.clientHeight;
+        canvas.width = Math.floor(W * dpr);
+        canvas.height = Math.floor(H * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    size();
+    window.addEventListener('resize', size);
+
+    // Smooth value noise — a cheap 1D perlin stand-in.
+    const wave = (x, seed) =>
+        Math.sin(x * 0.0021 + seed) * 0.55 +
+        Math.sin(x * 0.0057 + seed * 2.3) * 0.28 +
+        Math.sin(x * 0.0134 + seed * 4.7) * 0.17;
+
+    // depth = how far each layer parallaxes against the scroll (0 = pinned, 1 = tracks)
+    const LAYERS = [
+        { seed: 1.7, amp: 0.11, y: 0.28, speed: 0.016, depth: 0.06, glow: 5,
+          color: 'rgba(255,176,32,0.24)', fill: 'rgba(255,176,32,0.028)', w: 1.1 },
+        { seed: 4.2, amp: 0.09, y: 0.50, speed: 0.024, depth: 0.10, glow: 4,
+          color: 'rgba(109,127,138,0.22)', fill: 'rgba(109,127,138,0.026)', w: 1 },
+        { seed: 9.1, amp: 0.07, y: 0.70, speed: 0.010, depth: 0.14, glow: 0,
+          color: 'rgba(255,92,77,0.14)', fill: 'rgba(255,92,77,0.018)', w: 1 },
+    ];
+
+    let t = 0;
+    let running = true;
+    let scrollY = 0;
+    window.addEventListener('scroll', () => {
+        scrollY = window.scrollY;
+        // the CSS grid parallaxes too (see --gy in style.css)
+        document.documentElement.style.setProperty('--gy', scrollY + 'px');
+    }, { passive: true });
+
+    document.addEventListener('visibilitychange', () => {
+        running = !document.hidden;
+        if (running) requestAnimationFrame(frame);
+    });
+
+    function frame() {
+        if (!running) return;
+        t += 1;
+        ctx.clearRect(0, 0, W, H);
+
+        LAYERS.forEach((L) => {
+            // Parallax: each layer lags the scroll by its own depth, so the
+            // background has volume instead of being a flat sticker.
+            const base = H * L.y - scrollY * L.depth;
+            const amp = H * L.amp;
+            const off = t * L.speed * 14;
+
+            const path = (moveFirst) => {
+                for (let x = 0; x <= W; x += 6) {
+                    const y = base + wave(x + off, L.seed) * amp;
+                    (x === 0 && moveFirst) ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+                }
+            };
+
+            ctx.beginPath();
+            ctx.moveTo(0, H);
+            path(false);
+            ctx.lineTo(W, H);
+            ctx.closePath();
+            ctx.fillStyle = L.fill;
+            ctx.fill();
+
+            ctx.save();
+            ctx.shadowColor = L.color;
+            ctx.shadowBlur = L.glow;
+            ctx.beginPath();
+            path(true);
+            ctx.strokeStyle = L.color;
+            ctx.lineWidth = L.w;
+            ctx.stroke();
+            ctx.restore();
+        });
+
+        requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+}
+
+// ── Hero chart ──────────────────────────────────────────────────────────────────
+// Every lead is a bar, ordered by score, coloured by category — the score book
+// drawn as a market depth chart. Bars grow in on load; the top lead pulses.
+function drawHeroChart(leads) {
+    const canvas = document.getElementById('heroCanvas');
+    if (!canvas || !leads.length) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const PAD = { t: 10, r: 8, b: 8, l: 8 };
+    const data = [...leads].sort((a, b) => (b.score || 0) - (a.score || 0));
+    const COLOR = { hot: '#ff5c4d', warm: '#ffb020', cold: '#6d7f8a' };
+
+    const hi = document.getElementById('chartHi');
+    if (hi) hi.textContent = `HIGH ${data[0].score} · LOW ${data[data.length - 1].score}`;
+
+    const axis = document.getElementById('chartAxis');
+    if (axis) {
+        axis.innerHTML = `<span>${escapeHtml(data[0].company || '')}</span>` +
+            `<span>${data.length} POSITIONS</span>` +
+            `<span>${escapeHtml(data[data.length - 1].company || '')}</span>`;
+    }
+
+    const innerW = W - PAD.l - PAD.r;
+    const innerH = H - PAD.t - PAD.b;
+    const gap = 3;
+    const bw = Math.max(2, (innerW - gap * (data.length - 1)) / data.length);
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const start = performance.now();
+    const DUR = reduce ? 0 : 900;
+
+    function frame(now) {
+        const p = DUR ? Math.min(1, (now - start) / DUR) : 1;
+        const eased = 1 - Math.pow(1 - p, 3);
+        ctx.clearRect(0, 0, W, H);
+
+        // hairline gridlines at 25/50/75/100
+        ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+        ctx.lineWidth = 1;
+        [0, 0.25, 0.5, 0.75, 1].forEach(f => {
+            const y = PAD.t + innerH * f;
+            ctx.beginPath();
+            ctx.moveTo(PAD.l, y + 0.5);
+            ctx.lineTo(W - PAD.r, y + 0.5);
+            ctx.stroke();
+        });
+
+        data.forEach((l, i) => {
+            const cat = (l.category || 'Cold').toLowerCase();
+            const score = Number(l.score) || 0;
+            const h = (score / 100) * innerH * eased;
+            const x = PAD.l + i * (bw + gap);
+            const y = PAD.t + innerH - h;
+            ctx.fillStyle = COLOR[cat] || COLOR.cold;
+            ctx.globalAlpha = 0.9;
+            ctx.fillRect(x, y, bw, h);
+            // cap highlight
+            ctx.globalAlpha = 1;
+            ctx.fillRect(x, y, bw, Math.min(2, h));
+        });
+
+        // trend line across the tops
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = 'rgba(255,176,32,0.55)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        data.forEach((l, i) => {
+            const x = PAD.l + i * (bw + gap) + bw / 2;
+            const y = PAD.t + innerH - ((Number(l.score) || 0) / 100) * innerH * eased;
+            i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        });
+        ctx.stroke();
+
+        if (p < 1) requestAnimationFrame(frame);
+    }
+    requestAnimationFrame(frame);
+}
+
+// ── Ticker tape ─────────────────────────────────────────────────────────────────
+function buildTicker(leads) {
+    const track = document.getElementById('tickerTrack');
+    if (!track || !leads.length) return;
+    const item = (l) => {
+        const cat = (l.category || 'Cold').toLowerCase();
+        const up = (Number(l.interest) || 0) >= 7;
+        return `<span class="tick ${cat}">
+            <b>${escapeHtml(l.company || '—')}</b>
+            <span class="t-score">${escapeHtml(l.score)}</span>
+            <span class="t-arrow ${up ? 'up' : 'down'}">${up ? '▲' : '▼'}</span>
+            <span>${escapeHtml(l.category)}</span>
+        </span>`;
+    };
+    // Duplicated once so the -50% scroll loops seamlessly.
+    const row = leads.map(item).join('');
+    track.innerHTML = row + row;
+}
+
+// ── Scroll reveal ───────────────────────────────────────────────────────────────
+// Cards animate as they enter the viewport instead of all firing on load.
+function initScrollReveal() {
+    const targets = document.querySelectorAll('.card, .kpi-card, .board-main, .board-side, .dash-card');
+    if (!('IntersectionObserver' in window) || !targets.length) return;
+    const io = new IntersectionObserver((entries) => {
+        entries.forEach(e => {
+            if (e.isIntersecting) {
+                e.target.classList.add('in');
+                io.unobserve(e.target);
+            }
+        });
+    }, { rootMargin: '0px 0px -8% 0px', threshold: 0.06 });
+    targets.forEach(t => { t.classList.add('will-reveal'); io.observe(t); });
+}
+
+// ── Boot sequence ───────────────────────────────────────────────────────────────
+// A short cold-start once per browser session. Skippable by any key or click.
+const BOOT_KEY = 'salesspark_booted';
+
+function runBoot() {
+    if (sessionStorage.getItem(BOOT_KEY)) return;
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    sessionStorage.setItem(BOOT_KEY, '1');
+
+    const lines = [
+        'SALESSPARK TERMINAL v4.0',
+        'connecting to pipeline…',
+        'loading lead book…',
+        'copilot online',
+    ];
+    const el = document.createElement('div');
+    el.className = 'boot';
+    el.innerHTML = `<div class="boot-inner"><pre id="bootLines"></pre><span class="boot-skip">press any key to skip</span></div>`;
+    document.body.appendChild(el);
+
+    const pre = el.querySelector('#bootLines');
+    let i = 0;
+    const tick = setInterval(() => {
+        if (i >= lines.length) return finish();
+        pre.textContent += (i ? '\n' : '') + '> ' + lines[i++];
+    }, 170);
+
+    function finish() {
+        clearInterval(tick);
+        el.classList.add('out');
+        setTimeout(() => el.remove(), 380);
+        window.removeEventListener('keydown', finish);
+        window.removeEventListener('click', finish);
+    }
+    setTimeout(finish, 1000);
+    window.addEventListener('keydown', finish);
+    window.addEventListener('click', finish);
+}
+
 // ── Initialization ──────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+    runBoot();
+    initAtmosphere();
     highlightActiveNav();
     initChatbot();
+    loadStatusStrip();
+    loadBoard();
+    initScrollReveal();
 });
 
 // ── Chatbot widget ──────────────────────────────────────────────────────────────
@@ -327,7 +735,7 @@ function initChatbot() {
     const chatHTML = `
         <div class="chatbot-widget">
             <button class="chat-toggle-btn" onclick="toggleChat()" title="SalesSparkAI Copilot (Ctrl+K)" aria-label="Open SalesSparkAI Copilot">
-                <span class="chat-icon">🤖</span>
+                <span class="chat-icon"></span>
                 <span class="chat-pulse"></span>
                 <span class="chat-badge" id="chatBadge" style="display:none;" aria-hidden="true"></span>
             </button>

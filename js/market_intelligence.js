@@ -1,6 +1,4 @@
-// API_BASE is declared once in app.js, which every page loads before this file.
-// Re-declaring it here threw "Identifier 'API_BASE' has already been declared"
-// and killed this entire script.
+// API_BASE comes from js/app.js, which every page loads first.
 
 let demandChart = null;
 let matrixChart = null;
@@ -54,6 +52,25 @@ function updateInsight(data) {
     `;
 }
 
+// Terminal chart palette — one signal colour, semantic reds/greens, hairline grid.
+const T = {
+    amber: '#ffb020',
+    amberFill: 'rgba(255, 176, 32, 0.10)',
+    hot: '#ff5c4d',
+    up: '#45d48a',
+    cold: '#6d7f8a',
+    ink: '#e8e6e2',
+    faint: '#626a6e',
+    grid: 'rgba(255, 255, 255, 0.05)',
+    mono: "'JetBrains Mono', monospace",
+};
+
+const AXIS = {
+    ticks: { color: T.faint, font: { family: T.mono, size: 10 } },
+    grid: { color: T.grid, drawTicks: false },
+    border: { color: 'rgba(255,255,255,0.09)' },
+};
+
 function renderCharts(data) {
     const demandCtx = document.getElementById('chartDemand').getContext('2d');
     if (demandChart) demandChart.destroy();
@@ -62,22 +79,28 @@ function renderCharts(data) {
         data: {
             labels: ['M1', 'M2', 'M3', 'M4', 'M5', 'M6'],
             datasets: [{
-                label: 'Market Demand Index',
+                label: 'Demand Index',
                 data: data.demand_trend,
-                borderColor: '#3b82f6',
-                backgroundColor: 'rgba(59, 130, 246, 0.1)',
-                tension: 0.4,
-                fill: true
+                borderColor: T.amber,
+                backgroundColor: T.amberFill,
+                borderWidth: 1.5,
+                pointBackgroundColor: T.amber,
+                pointBorderWidth: 0,
+                pointRadius: 2.5,
+                pointHoverRadius: 5,
+                tension: 0.25,
+                fill: true,
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            animation: { duration: 700, easing: 'easeOutCubic' },
             scales: {
-                y: { beginAtZero: true, max: 120, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#94a3b8' } },
-                x: { grid: { display: false }, ticks: { color: '#94a3b8' } }
+                y: { beginAtZero: true, max: 120, ...AXIS },
+                x: { ...AXIS, grid: { display: false } },
             },
-            plugins: { legend: { labels: { color: '#f8fafc' } } }
+            plugins: { legend: { display: false } },
         }
     });
 
@@ -86,22 +109,24 @@ function renderCharts(data) {
     matrixChart = new Chart(matrixCtx, {
         type: 'bar',
         data: {
-            labels: ['Competition', 'Opportunity', 'Saturation'],
+            labels: ['COMPETITION', 'OPPORTUNITY', 'SATURATION'],
             datasets: [{
-                label: 'Market Score (0-100)',
                 data: [data.market_matrix.competition, data.market_matrix.opportunity, data.market_matrix.saturation],
-                backgroundColor: ['#f43f5e', '#10b981', '#f59e0b'],
-                borderWidth: 0
+                backgroundColor: [T.hot, T.up, T.amber],
+                borderWidth: 0,
+                borderRadius: 0,
+                barThickness: 38,
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            animation: { duration: 700, easing: 'easeOutCubic' },
             scales: {
-                y: { beginAtZero: true, max: 100, grid: { color: 'rgba(255,255,255,0.1)' }, ticks: { color: '#94a3b8' } },
-                x: { grid: { display: false }, ticks: { color: '#f8fafc', font: { weight: 'bold' } } }
+                y: { beginAtZero: true, max: 100, ...AXIS },
+                x: { ...AXIS, grid: { display: false }, ticks: { ...AXIS.ticks, color: T.ink } },
             },
-            plugins: { legend: { display: false } }
+            plugins: { legend: { display: false } },
         }
     });
 
@@ -113,14 +138,22 @@ function renderCharts(data) {
             labels: Object.keys(data.channels),
             datasets: [{
                 data: Object.values(data.channels),
-                backgroundColor: ['#0a66c2', '#e1306c', '#facc15'],
-                borderWidth: 0
+                backgroundColor: [T.amber, T.cold, T.up, T.hot],
+                borderColor: '#0d0f10',
+                borderWidth: 2,
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
-            plugins: { legend: { position: 'right', labels: { color: '#f8fafc' } } }
+            cutout: '68%',
+            animation: { duration: 700, easing: 'easeOutCubic' },
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: { color: T.faint, font: { family: T.mono, size: 10 }, boxWidth: 8, boxHeight: 8 },
+                },
+            },
         }
     });
 }

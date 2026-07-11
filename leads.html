@@ -6,55 +6,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Leads & Deal Tools | SalesSpark AI</title>
     <meta name="description" content="Manage leads, view scores, and access AI-powered deal closing tools all in one place.">
-    <link rel="icon" type="image/png" href="./assets/favicon.png">
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg">
+    <link rel="alternate icon" type="image/png" href="./assets/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
-    <style>
-        .section-divider {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            margin: 48px 0 32px;
-        }
-
-        .section-divider::before,
-        .section-divider::after {
-            content: '';
-            flex: 1;
-            height: 1px;
-            background: rgba(255, 255, 255, 0.08);
-        }
-
-        .section-divider-label {
-            font-size: 11px;
-            font-weight: 700;
-            text-transform: uppercase;
-            letter-spacing: 0.1em;
-            color: var(--text-muted);
-            white-space: nowrap;
-        }
-
-        .deal-tools-card {
-            background: linear-gradient(135deg, rgba(102, 126, 234, 0.08), rgba(118, 75, 162, 0.04));
-            border: 1px solid rgba(102, 126, 234, 0.2);
-        }
-
-        #lead-selector {
-            background: var(--bg-card);
-            color: var(--text-main);
-            border: 2px solid var(--primary);
-        }
-
-        #lead-selector option {
-            background: #0f172a;
-            color: var(--text-main);
-        }
-    </style>
 </head>
 
 <body>
     <nav class="navbar">
         <a href="index.html" class="navbar-brand">
-            <img src="assets/favicon.png" alt="SalesSpark AI Logo">
+            <img src="assets/favicon.svg" alt="SalesSpark AI">
             <span class="brand-text">SalesSpark AI</span>
         </a>
         <div class="nav-links">
@@ -67,62 +30,85 @@
         </div>
     </nav>
 
-    <section class="container" style="padding: 20px;">
-        <h1 class="page-title">Lead Intelligence &amp; Actions</h1>
-        <p class="page-subtitle">Analyze, prioritize, and act on high-intent leads</p>
+    <div class="status-strip" id="statusStrip">
+        <span class="status-item"><span class="status-live"></span> LIVE</span>
+        <span class="status-item">PIPELINE <b id="st-total">--</b></span>
+        <span class="status-item hot">HOT <b id="st-hot">--</b></span>
+        <span class="status-item warm">WARM <b id="st-warm">--</b></span>
+        <span class="status-item">AVG <b id="st-avg">--</b></span>
+        <span class="status-item up">HEALTH <b id="st-health">--</b></span>
+    </div>
+
+    <section class="container">
+        <h1 class="page-title">Lead Book</h1>
+        <p class="page-subtitle">Live positions — scored, ranked, actionable</p>
     </section>
 
-    <section class="container" style="padding: 0 20px 20px;">
+    <section class="container">
         <div class="card">
-            <h3>Active Leads</h3>
-            <p style="color: var(--text-muted); margin-bottom: 20px;">Below is the live data used by the Sales Copilot.</p>
+            <div class="table-toolbar">
+                <h3>Active Leads</h3>
+                <div class="toolbar-controls">
+                    <input type="search" id="leadSearch" class="table-search" placeholder="Filter company…"
+                        aria-label="Filter by company">
+                    <div class="filter-chips" role="group" aria-label="Filter by category">
+                        <button class="chip active" data-cat="all">All</button>
+                        <button class="chip" data-cat="Hot">Hot</button>
+                        <button class="chip" data-cat="Warm">Warm</button>
+                        <button class="chip" data-cat="Cold">Cold</button>
+                    </div>
+                </div>
+            </div>
 
-            <table style="width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 14px;">
-                <thead>
-                    <tr style="border-bottom: 2px solid rgba(255,255,255,0.1); text-align: left;">
-                        <th style="padding: 12px; color: var(--text-muted);">Lead ID</th>
-                        <th style="padding: 12px; color: var(--text-muted);">Company</th>
-                        <th style="padding: 12px; color: var(--text-muted);">Budget</th>
-                        <th style="padding: 12px; color: var(--text-muted);">Interest</th>
-                        <th style="padding: 12px; color: var(--text-muted);">Score</th>
-                        <th style="padding: 12px; color: var(--text-muted);">Category</th>
-                        <th style="padding: 12px; color: var(--text-muted);">Industry</th>
-                        <th style="padding: 12px; color: var(--text-muted);">Region</th>
-                    </tr>
-                </thead>
-                <tbody id="leads-table-body">
-                    <tr>
-                        <td colspan="8" style="padding: 20px; text-align: center; color: var(--text-muted);">Loading leads...</td>
-                    </tr>
-                </tbody>
-            </table>
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th class="sortable" data-key="id">ID</th>
+                            <th class="sortable" data-key="company">Company</th>
+                            <th class="sortable" data-key="budget">Budget</th>
+                            <th class="sortable" data-key="interest">Interest</th>
+                            <th class="sortable sorted-desc" data-key="score">Score</th>
+                            <th class="sortable" data-key="category">Category</th>
+                            <th class="sortable" data-key="industry">Industry</th>
+                            <th class="sortable" data-key="region">Region</th>
+                        </tr>
+                    </thead>
+                    <tbody id="leads-table-body">
+                        <tr><td colspan="8"><div class="skeleton"></div></td></tr>
+                        <tr><td colspan="8"><div class="skeleton"></div></td></tr>
+                        <tr><td colspan="8"><div class="skeleton"></div></td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="table-foot" id="leadCount"></div>
         </div>
     </section>
 
-    <section class="container" id="deal-tools" style="padding: 0 20px 60px;">
+    <section class="container" id="deal-tools">
         <div class="section-divider">
             <span class="section-divider-label">Deal Closing Assistant</span>
         </div>
 
-        <div class="card deal-tools-card" style="margin-bottom: 30px;">
-            <h3>Select Lead for Deal Analysis</h3>
-            <select id="lead-selector" style="width: 100%; padding: 12px; font-size: 16px; border-radius: 8px; margin-top: 10px;">
-                <option value="">-- Select a Lead --</option>
+        <div class="card deal-tools-card">
+            <h3>Select Lead</h3>
+            <select id="lead-selector">
+                <option value="">— Select a lead —</option>
             </select>
-            <p id="lead-selector-status" style="margin-top: 10px; font-size: 14px; color: var(--text-muted);"></p>
+            <p id="lead-selector-status" class="selector-status"></p>
         </div>
 
         <div class="grid">
             <div class="card">
-                <h3>Deal Closure Assistant</h3>
-                <p style="color: var(--text-muted); margin-bottom: 20px;">Get AI-powered closing strategy for the selected lead</p>
+                <h3>Closing Strategy</h3>
+                <p>Discount band, likely objection, and the next step for the selected lead.</p>
                 <button class="tool-btn" id="deal-btn" onclick="getDealStrategy()" disabled>Get Strategy</button>
                 <div id="deal_output" class="output"></div>
             </div>
 
             <div class="card">
                 <h3>Follow-up Planner</h3>
-                <p style="color: var(--text-muted); margin-bottom: 20px;">Generate a time-sequenced follow-up plan for the selected lead</p>
+                <p>A day 1 / day 3 / day 7 sequence tuned to the lead's stage.</p>
                 <button class="tool-btn" id="followup-btn" onclick="getFollowupPlan()" disabled>Generate Plan</button>
                 <div id="followup_output" class="output"></div>
             </div>
@@ -130,46 +116,103 @@
     </section>
 
     <footer>
-        <p>� 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
+        <p>SalesSpark AI &middot; Sales Intelligence Terminal &middot; 2026</p>
     </footer>
 
     <script src="js/app.js"></script>
     <script src="js/deal_tools.js"></script>
     <script>
+        // One GET /leads feeds the table, the filters, and the deal-tools dropdown.
+        let allLeads = [];
+        let sortKey = 'score';
+        let sortDir = -1;          // -1 = descending
+        let activeCat = 'all';
+        let query = '';
+
+        function renderLeads() {
+            const tbody = document.getElementById('leads-table-body');
+            const rows = allLeads
+                .filter(l => activeCat === 'all' || l.category === activeCat)
+                .filter(l => !query || (l.company || '').toLowerCase().includes(query))
+                .sort((a, b) => {
+                    const x = a[sortKey], y = b[sortKey];
+                    const cmp = (typeof x === 'number' && typeof y === 'number')
+                        ? x - y
+                        : String(x ?? '').localeCompare(String(y ?? ''));
+                    return cmp * sortDir;
+                });
+
+            document.getElementById('leadCount').textContent =
+                `${rows.length} of ${allLeads.length} leads`;
+
+            if (!rows.length) {
+                tbody.innerHTML = '<tr><td colspan="8"><div class="panel-empty">No matching leads</div></td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = rows.map((lead, i) => {
+                const cat = (lead.category || 'Cold').toLowerCase();
+                const score = Number(lead.score) || 0;
+                return `
+                    <tr style="animation-delay:${Math.min(i, 20) * 18}ms">
+                        <td class="num">${escapeHtml(lead.id)}</td>
+                        <td class="lead-co">${escapeHtml(lead.company || '—')}</td>
+                        <td class="num">${lead.budget ? '$' + Number(lead.budget).toLocaleString() : '—'}</td>
+                        <td class="num">${escapeHtml(lead.interest ?? '—')}<span class="unit">/10</span></td>
+                        <td>
+                            <div class="score-cell">
+                                <span class="num score-num">${escapeHtml(lead.score)}</span>
+                                <span class="score-bar"><i class="${cat}" style="width:${score}%"></i></span>
+                            </div>
+                        </td>
+                        <td><span class="cat ${cat}">${escapeHtml(lead.category)}</span></td>
+                        <td>${escapeHtml(lead.industry || '—')}</td>
+                        <td>${escapeHtml(lead.region || '—')}</td>
+                    </tr>`;
+            }).join('');
+        }
+
         document.addEventListener('DOMContentLoaded', async () => {
+            // Sortable headers
+            document.querySelectorAll('th.sortable').forEach(th => {
+                th.addEventListener('click', () => {
+                    const key = th.dataset.key;
+                    sortDir = (key === sortKey) ? -sortDir : -1;
+                    sortKey = key;
+                    document.querySelectorAll('th.sortable').forEach(o =>
+                        o.classList.remove('sorted-asc', 'sorted-desc'));
+                    th.classList.add(sortDir === 1 ? 'sorted-asc' : 'sorted-desc');
+                    renderLeads();
+                });
+            });
+
+            // Category chips
+            document.querySelectorAll('.chip').forEach(chip => {
+                chip.addEventListener('click', () => {
+                    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+                    chip.classList.add('active');
+                    activeCat = chip.dataset.cat;
+                    renderLeads();
+                });
+            });
+
+            // Search
+            const search = document.getElementById('leadSearch');
+            if (search) search.addEventListener('input', () => {
+                query = search.value.trim().toLowerCase();
+                renderLeads();
+            });
+
             try {
-                const res = await fetch(`${API_BASE}/leads`);
+                const res = await fetch('http://127.0.0.1:8000/leads');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
                 const data = await res.json();
-                const tbody = document.getElementById('leads-table-body');
-
-                // One fetch feeds both the table and the deal-tools dropdown.
-                populateLeadsDropdown(data.leads);
-
-                if (!data.leads || data.leads.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="8" style="padding: 20px; text-align: center;">No leads found.</td></tr>';
-                    return;
-                }
-
-                tbody.innerHTML = data.leads.map(lead => {
-                    let color = '#94a3b8';
-                    if (lead.category === 'Hot') color = '#f87171';
-                    if (lead.category === 'Warm') color = '#f59e0b';
-
-                    return `
-                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
-                            <td style="padding: 15px; font-weight: 700;">#${escapeHtml(lead.id)}</td>
-                            <td style="padding: 15px; color: var(--text-main);">${escapeHtml(lead.company || 'N/A')}</td>
-                            <td style="padding: 15px; color: var(--text-muted);">${lead.budget ? `$${Number(lead.budget).toLocaleString()}` : 'N/A'}</td>
-                            <td style="padding: 15px; color: var(--text-muted);">${escapeHtml(lead.interest ?? 'N/A')}/10</td>
-                            <td style="padding: 15px; font-weight: 700;">${escapeHtml(lead.score)}/100</td>
-                            <td style="padding: 15px;"><span style="color: ${color}; font-weight: 600; background: ${color}15; padding: 4px 10px; border-radius: 4px;">${escapeHtml(lead.category)}</span></td>
-                            <td style="padding: 15px; color: var(--text-muted);">${escapeHtml(lead.industry || 'N/A')}</td>
-                            <td style="padding: 15px; color: var(--text-muted);">${escapeHtml(lead.region || 'N/A')}</td>
-                        </tr>
-                    `;
-                }).join('');
+                allLeads = data.leads || [];
+                populateLeadsDropdown(allLeads);
+                renderLeads();
             } catch (e) {
-                document.getElementById('leads-table-body').innerHTML = '<tr><td colspan="8" style="color: #f87171; padding: 20px; text-align: center;">Error loading leads.</td></tr>';
+                document.getElementById('leads-table-body').innerHTML =
+                    '<tr><td colspan="8"><div class="panel-empty" style="color:var(--hot)">Backend offline — cannot load leads</div></td></tr>';
                 const status = document.getElementById('lead-selector-status');
                 if (status) {
                     status.innerHTML = 'Failed to load leads. Ensure backend is running.';
