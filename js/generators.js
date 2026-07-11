@@ -1,11 +1,16 @@
-// API_BASE comes from js/app.js, which every page loads first.
+// API_BASE and escapeHtml come from js/app.js, which every page loads first.
+
+// Everything the backend returns here is derived from what the user typed (the
+// AI fallbacks interpolate the industry/product/company straight into their
+// strings), so every value must be escaped before it reaches innerHTML.
+const esc = (v) => escapeHtml(v == null ? '' : v);
 
 function showOutput(elementId, content, insight = "") {
     const el = document.getElementById(elementId);
     el.style.display = 'block';
     el.innerHTML = `
         ${content}
-        ${insight ? `<div class="ai-insight"><b>AI Insight:</b> ${insight}</div>` : ''}
+        ${insight ? `<div class="ai-insight"><b>AI Insight:</b> ${esc(insight)}</div>` : ''}
     `;
     el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -31,12 +36,12 @@ async function generateCampaign() {
         const data = await res.json();
 
         const content = `
-            <strong>Objective:</strong> ${data.objective}<br>
-            <strong>Campaign Theme:</strong> ${data.theme}<br>
-            <strong>Marketing Strategy:</strong> ${data.marketing_strategy}<br>
-            <strong>Messaging Approach:</strong> ${data.messaging_approach}<br>
-            <strong>CTA:</strong> ${data.cta}<br>
-            <strong>Expected Outcome:</strong> ${data.outcome}
+            <strong>Objective:</strong> ${esc(data.objective)}<br>
+            <strong>Campaign Theme:</strong> ${esc(data.theme)}<br>
+            <strong>Marketing Strategy:</strong> ${esc(data.marketing_strategy)}<br>
+            <strong>Messaging Approach:</strong> ${esc(data.messaging_approach)}<br>
+            <strong>CTA:</strong> ${esc(data.cta)}<br>
+            <strong>Expected Outcome:</strong> ${esc(data.outcome)}
         `;
         showOutput('cG_output', content, data.ai_insight);
     } catch (e) {
@@ -60,15 +65,15 @@ async function generatePitch() {
 
         document.getElementById("pitchOutput").style.display = 'block';
         document.getElementById("pitchOutput").innerHTML = `
-            <b>Opening Hook:</b> ${data.opening_hook}<br>
-            <b>Problem Framing:</b> ${data.problem_framing}<br>
-            <b>Product Positioning:</b> ${data.product_positioning}<br>
-            <b>Objection Handling:</b> ${data.objection_handling}<br>
-            <b>Closing Statement:</b> ${data.closing_statement}
+            <b>Opening Hook:</b> ${esc(data.opening_hook)}<br>
+            <b>Problem Framing:</b> ${esc(data.problem_framing)}<br>
+            <b>Product Positioning:</b> ${esc(data.product_positioning)}<br>
+            <b>Objection Handling:</b> ${esc(data.objection_handling)}<br>
+            <b>Closing Statement:</b> ${esc(data.closing_statement)}
         `;
     } catch (e) {
         document.getElementById("pitchOutput").style.display = 'block';
-        document.getElementById("pitchOutput").innerHTML = `<b style='color:red'>Error: ${e.message}</b>`;
+        document.getElementById("pitchOutput").innerHTML = `<b style='color:red'>Error: ${esc(e.message)}</b>`;
     }
 }
 
@@ -87,14 +92,14 @@ async function scoreLead() {
 
         document.getElementById("leadOutput").style.display = 'block';
         document.getElementById("leadOutput").innerHTML = `
-            <b>Score:</b> ${data.score}/100<br>
-            <b>Category:</b> ${data.category}<br>
-            <b>Recommendation:</b> ${data.recommendation}<br>
-            <b>Explanation:</b> ${data.explanation}
+            <b>Score:</b> ${esc(data.score)}/100<br>
+            <b>Category:</b> ${esc(data.category)}<br>
+            <b>Recommendation:</b> ${esc(data.recommendation)}<br>
+            <b>Explanation:</b> ${esc(data.explanation)}
         `;
     } catch (e) {
         document.getElementById("leadOutput").style.display = 'block';
-        document.getElementById("leadOutput").innerHTML = `<b style='color:red'>Error: ${e.message}</b>`;
+        document.getElementById("leadOutput").innerHTML = `<b style='color:red'>Error: ${esc(e.message)}</b>`;
     }
 }
 
@@ -109,10 +114,10 @@ async function analyzeMarket() {
         if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json();
         const content = `
-            <strong>Demand Insight:</strong> ${data.market_trend_summary}<br>
-            <strong>Demand Level:</strong> ${data.demand_level}<br>
-            <strong>Competition Overview:</strong> ${data.competition_overview}<br>
-            <strong>Opportunity Summary:</strong> ${data.opportunity_insights}
+            <strong>Demand Insight:</strong> ${esc(data.market_trend_summary)}<br>
+            <strong>Demand Level:</strong> ${esc(data.demand_level)}<br>
+            <strong>Competition Overview:</strong> ${esc(data.competition_overview)}<br>
+            <strong>Opportunity Summary:</strong> ${esc(data.opportunity_insights)}
         `;
         showOutput('mA_output', content, data.insight);
     } catch (e) {
@@ -138,10 +143,10 @@ async function generateContent() {
         output.style.display = "block";
         output.innerHTML = `
             <h4>Generated Content</h4>
-            <p><b>Tone:</b> ${data.tone}</p>
-            <p><b>Caption:</b><br>${data.caption}</p>
-            <p><b>Hashtags:</b> ${data.hashtags}</p>
-            <p><i>${data.ai_insight}</i></p>
+            <p><b>Tone:</b> ${esc(data.tone)}</p>
+            <p><b>Caption:</b><br>${esc(data.caption)}</p>
+            <p><b>Hashtags:</b> ${esc(data.hashtags)}</p>
+            <p><i>${esc(data.ai_insight)}</i></p>
         `;
     } catch (e) {
         output.style.display = "block";
@@ -166,9 +171,9 @@ async function generateEmail() {
 
         output.style.display = 'block';
         output.innerHTML = `
-            <b>Subject:</b> ${data.subject}<br><br>
-            <pre>${data.body}</pre><br>
-            <i>${data.follow_up_tip}</i>
+            <b>Subject:</b> ${esc(data.subject)}<br><br>
+            <pre>${esc(data.body)}</pre><br>
+            <i>${esc(data.follow_up_tip)}</i>
         `;
     } catch (e) {
         output.style.display = 'block';

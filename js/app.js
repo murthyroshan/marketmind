@@ -101,6 +101,15 @@ function addToHistory(role, content) {
     chatHistory.push({ role, content });
     saveHistory();
 }
+// The turn being sent is already in chatHistory (addUserMessage runs first) and the
+// backend appends it again as the final user message, so send only what came before
+// it — otherwise the model sees the same question twice.
+function priorHistory() {
+    const prior = chatHistory[chatHistory.length - 1]?.role === 'user'
+        ? chatHistory.slice(0, -1)
+        : chatHistory;
+    return prior.slice(-8);
+}
 function saveTranscript() {
     transcript = transcript.slice(-60);
     localStorage.setItem(CHAT_KEYS.transcript, JSON.stringify(transcript));
@@ -143,7 +152,12 @@ function detectNavigationIntent(msg) {
 }
 
 // ── Client-side page-aware feature guidance (instant, no API call) ──────────────
-const FEATURE_GUIDANCE_RE = /\b(how\s+(do\s+i|can\s+i|to)|how\s+does?|guide\s+me|help\s+me\s+(use|with)|what\s+can\s+i\s+do|explain)\b/i;
+// This only answers "how does this page work" questions. It must NOT swallow real
+// work — "How do I close Acme?" and "How can I improve campaign performance?" are
+// questions for the agent, so the pattern requires an explicit reference to the
+// page/tool itself rather than matching any "how do I" phrasing.
+const FEATURE_GUIDANCE_RE =
+    /\b(how\s+do(es)?\s+(this|it)\s+(page\s+|tool\s+|thing\s+)?work|how\s+do\s+i\s+use\s+(this|it)|help\s+me\s+use\s+(this|it)|guide\s+me\s+(through|around)|what\s+(can\s+i\s+do|is\s+there\s+to\s+do)\s+(here|on\s+this\s+page)|what\s+is\s+this\s+page\s+for)\b/i;
 const FEATURE_GUIDANCE = {
     tools: (
         "<strong>Campaign Generator:</strong> pick an industry + audience, hit " +
@@ -181,8 +195,9 @@ function renderRichText(text) {
     html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     html = html.replace(/(^|[\s(])\*([^*\n]+)\*/g, '$1<em>$2</em>');
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-    // "- " / "• " bullet lines
-    html = html.replace(/(^|<br>)\s*[-•]\s+/g, '$1&nbsp;&nbsp;• ');
+    // "- " / "• " bullet lines. This has to run against the newlines, before they
+    // become <br> — matching on "<br>" here would only ever catch the first line.
+    html = html.replace(/(^|\n)\s*[-•]\s+/g, '$1&nbsp;&nbsp;• ');
     html = html.replace(/\n/g, '<br>');
     return html;
 }
@@ -836,7 +851,16 @@ async function loadBriefing() {
                 .join('<br>'));
         }
         pendingBriefing = parts.join('<br><br>') + '<br><br><em>Want me to draft outreach for the top one?</em>';
-        showBadge(actions.length || alerts.length);
+
+        // The fetch above is slower than initChatbot, so a chat that was restored
+        // already-open has passed its delivery check by now. Deliver straight into
+        // the open panel; only badge it if the user hasn't opened the copilot.
+        const win = document.getElementById('chatWindow');
+        if (win && win.classList.contains('open')) {
+            deliverBriefing();
+        } else {
+            showBadge(actions.length || alerts.length);
+        }
     } catch (e) {
         /* backend down — stay quiet, the widget still works */
     }
@@ -1185,6 +1209,10 @@ async function streamBotResponse(msg) {
     let toolCards = [];
     let navAction = null;
     let suggestions = null;
+    // Tracks whether the server got far enough to run a tool. Tools write to the
+    // database (score_lead inserts a lead, generate_campaign inserts a campaign),
+    // so retrying a turn that already reached one would run it a second time.
+    let toolStarted = false;
 
     const setStatus = (label) => {
         s.bubbleEl.innerHTML = `<span class="stream-status">${escapeHtml(label)}…</span>`;
@@ -1196,7 +1224,7 @@ async function streamBotResponse(msg) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 message: msg, session_id: CHAT_SESSION_ID,
-                current_page: getCurrentPage(), history: chatHistory.slice(-8),
+                current_page: getCurrentPage(), history: priorHistory(),
             }),
             signal: streamController.signal,
         });
@@ -1225,6 +1253,7 @@ async function streamBotResponse(msg) {
                     s.bubbleEl.innerHTML = renderRichText(acc) + '<span class="stream-cursor"></span>';
                     keepInView(s.msgEl);
                 } else if (ev.type === 'tool') {
+                    toolStarted = true;
                     if (firstToken) setStatus(ev.label || 'Working');
                 } else if (ev.type === 'tool_result') {
                     toolCards.push(renderToolCard(ev));
@@ -1247,11 +1276,28 @@ async function streamBotResponse(msg) {
             streamController = null;
             return;
         }
-        // Streaming failed — fall back to the non-streaming endpoint.
-        s.msgEl.remove();
         setStreamingUI(false);
         streamController = null;
-        return fallbackChat(msg);
+
+        // Retrying is only safe if the turn never got as far as running a tool.
+        // Once a tool has run its writes are already committed, so re-sending the
+        // message would execute it again — a second lead, a second campaign.
+        if (!toolStarted && firstToken && !navAction) {
+            s.msgEl.remove();
+            return fallbackChat(msg);
+        }
+
+        // Otherwise keep whatever the server did send and say the rest was lost,
+        // rather than silently re-running the work.
+        const partial = acc.trim();
+        finalizeStream(
+            s,
+            partial ? partial + '\n\n(The connection dropped before I finished.)'
+                    : 'The connection dropped while I was working. Anything above was completed — check before retrying, so it does not run twice.',
+            toolCards,
+            null,
+        );
+        return;
     }
 
     const finalText = acc.trim() || (navAction ? (navAction.response || '') : '');
@@ -1289,13 +1335,16 @@ async function fallbackChat(msg) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 message: msg, session_id: CHAT_SESSION_ID,
-                current_page: getCurrentPage(), history: chatHistory.slice(-8),
+                current_page: getCurrentPage(), history: priorHistory(),
             }),
         });
         const data = await res.json();
-        const cards = (data.action === 'tool_result' && data.tool)
-            ? [renderToolCard({ tool: data.tool, result: data.result })] : [];
-        const text = data.response || 'Done.';
+        // /chat returns every tool it ran, so a turn that both navigates and
+        // generates an asset keeps its cards instead of dropping them.
+        const cards = (Array.isArray(data.tools) ? data.tools : [])
+            .map(t => renderToolCard({ tool: t.tool, result: t.result }))
+            .filter(Boolean);
+        const text = data.error ? `⚠️ ${data.error}` : (data.response || 'Done.');
         finalizeStream(s, text, cards, data.action === 'navigate' ? data : null);
         if (Array.isArray(data.suggestions)) updateSuggestions(data.suggestions);
         if (data.action === 'navigate' && data.url) {

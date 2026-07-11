@@ -69,17 +69,17 @@ async function getDealStrategy() {
         const data = await res.json();
 
         if (data.error) {
-            showOutput('deal_output', data.error);
+            showOutput('deal_output', escapeHtml(data.error));
             return;
         }
 
         const output = `
             <div style="background: var(--card); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
-                <div style="font-size: 18px; font-weight: 700; margin-bottom: 15px; color: var(--primary);">${data.closing_strategy}</div>
-                <div style="margin-bottom: 12px;"><strong>Negotiation Advice:</strong> ${data.negotiation_advice || data.objection_focus}</div>
-                <div style="margin-bottom: 12px;"><strong>Recommended Next Step:</strong> ${data.recommended_next_step || data.explanation}</div>
-                <div style="margin-bottom: 12px;"><strong>Urgency:</strong> ${data.urgency_level}</div>
-                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); color: var(--text-muted); font-size: 14px;"><strong>Reasoning:</strong> ${data.explanation}</div>
+                <div style="font-size: 18px; font-weight: 700; margin-bottom: 15px; color: var(--primary);">${escapeHtml(data.closing_strategy)}</div>
+                <div style="margin-bottom: 12px;"><strong>Negotiation Advice:</strong> ${escapeHtml(data.negotiation_advice || data.objection_focus)}</div>
+                <div style="margin-bottom: 12px;"><strong>Recommended Next Step:</strong> ${escapeHtml(data.recommended_next_step || data.explanation)}</div>
+                <div style="margin-bottom: 12px;"><strong>Urgency:</strong> ${escapeHtml(data.urgency_level)}</div>
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); color: var(--text-muted); font-size: 14px;"><strong>Reasoning:</strong> ${escapeHtml(data.explanation)}</div>
             </div>
         `;
 
@@ -110,7 +110,7 @@ async function getFollowupPlan() {
         const data = await res.json();
 
         if (data.error) {
-            showOutput('followup_output', data.error);
+            showOutput('followup_output', escapeHtml(data.error));
             return;
         }
 
@@ -121,15 +121,15 @@ async function getFollowupPlan() {
 
         const planSteps = Object.entries(data.plan).map(([day, action]) => `
             <div style="margin-bottom: 12px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 8px;">
-                <strong style="color: var(--primary);">${day.toUpperCase()}:</strong> ${action}
+                <strong style="color: var(--primary);">${escapeHtml(day.toUpperCase())}:</strong> ${escapeHtml(action)}
             </div>
         `).join('');
 
         showOutput('followup_output', `
             <div style="background: var(--card); padding: 20px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.1);">
-                <div style="margin-bottom: 15px;"><strong>Lead Category:</strong> ${data.category} | <strong>Score:</strong> ${data.score}/100</div>
+                <div style="margin-bottom: 15px;"><strong>Lead Category:</strong> ${escapeHtml(data.category)} | <strong>Score:</strong> ${escapeHtml(data.score)}/100</div>
                 ${planSteps}
-                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); color: var(--text-muted); font-size: 13px;">${data.note}</div>
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); color: var(--text-muted); font-size: 13px;">${escapeHtml(data.note)}</div>
             </div>
         `);
     } catch (e) {

@@ -12,7 +12,7 @@ import os
 import random
 import re
 import sqlite3
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -30,10 +30,12 @@ logger = logging.getLogger("salespark")
 try:
     from backend.ai_service import (
         build_messages, build_pipeline_summary, stream_agent, run_agent, groq_ready,
+        TOOL_LABELS,
     )
 except ImportError:
     from ai_service import (
         build_messages, build_pipeline_summary, stream_agent, run_agent, groq_ready,
+        TOOL_LABELS,
     )
 
 try:
@@ -1238,12 +1240,16 @@ def execute_chat_tool(name: str, args: Dict[str, Any], current_page: str, db_con
         }
 
     if name == "analyze_pipeline":
-        brief = _pipeline_brief(db_context)
-        top = db_context.get("top_leads") or []
+        # Re-read the pipeline instead of using db_context, which was captured before
+        # the turn began. score_lead can run earlier in the same turn, and answering
+        # from the stale snapshot would omit the lead we just told the user we added.
+        live = get_pipeline_snapshot()
+        brief = _pipeline_brief(live)
+        top = live.get("top_leads") or []
         if top:
             t = top[0]
             brief += f" Top lead: {t['company']} ({t['score']}/100, {t['category']})."
-        brief += f" Pipeline health: {db_context.get('pipeline_health', 'Unknown')}."
+        brief += f" Pipeline health: {live.get('pipeline_health', 'Unknown')}."
         return {"for_model": brief, "event": None}
 
     if name == "get_next_actions":
@@ -1329,11 +1335,30 @@ def execute_chat_tool(name: str, args: Dict[str, Any], current_page: str, db_con
 
     if name == "score_lead":
         company = (args.get("company") or "").strip()
+        # Scoring WRITES a lead row, so a missing budget or interest must stop the
+        # tool, not get defaulted. Coercing them to 0/5 passes ScoreRequest's own
+        # bounds, which would silently persist a lead the user never described.
+        missing = [
+            label for label, value in (
+                ("a company name", company),
+                ("a budget in dollars", args.get("budget")),
+                ("an interest level from 1-10", args.get("interest")),
+            ) if value in (None, "")
+        ]
+        if missing:
+            return {
+                "for_model": (
+                    "Do NOT score this lead yet — you are missing " + ", ".join(missing) +
+                    ". Ask the user for the missing values and call score_lead again once "
+                    "they answer. Do not guess or assume them."
+                ),
+                "event": None,
+            }
         try:
             result = score_lead(ScoreRequest(
                 company=company,
-                budget=int(args.get("budget") or 0),
-                interest=int(args.get("interest") or 5),
+                budget=int(args["budget"]),
+                interest=int(args["interest"]),
                 industry=args.get("industry"),
                 region=args.get("region"),
             ))
@@ -1341,7 +1366,7 @@ def execute_chat_tool(name: str, args: Dict[str, Any], current_page: str, db_con
             return {
                 "for_model": (
                     "Scoring needs a company name, a budget in dollars, and an interest level "
-                    "from 1-10. Ask the user for whatever is missing."
+                    "from 1-10. Ask the user for whatever is missing or invalid."
                 ),
                 "event": None,
             }
@@ -1431,6 +1456,134 @@ def _chat_executor(message: str, current_page: str, db_context: Dict[str, Any]) 
     return _run
 
 
+# ── Deterministic fallback ──────────────────────────────────────────────────────
+# The LLM is not the only way to answer. When Groq is unconfigured or out of quota,
+# route the message through plain intent matching and run the same tools directly,
+# so pipeline questions and generation still work instead of the copilot going dead.
+# (The generators degrade to templates without Groq, so they work here too.)
+_OFFLINE_INTENTS: List[tuple] = [
+    # Scoring writes a row and needs numbers we cannot reliably parse from prose, so
+    # it is never run here — it asks instead. This must precede list_leads, or "add
+    # Acme as a new lead" would match on the word "lead" and just list the book.
+    (re.compile(r"\b(add|create|score|rate|evaluate)\b.{0,30}\b(lead|prospect|company)\b|\bscore\s+\w+", re.I),
+     "__ask_score"),
+    (re.compile(r"\b(next\s+(best\s+)?(action|step)s?|what\s+should\s+i\s+do|who\s+(do\s+i|should\s+i)\s+(call|contact))\b", re.I),
+     "get_next_actions"),
+    (re.compile(r"\b(pipeline|how\s+many\s+leads|health|overview|summary|how\s+am\s+i\s+doing)\b", re.I),
+     "analyze_pipeline"),
+    (re.compile(r"\b(follow[\s-]?up|sequence|cadence)\b", re.I), "get_followup_plan"),
+    (re.compile(r"\b(close|closing|deal\s+strategy|negotiat)\w*\b", re.I), "get_deal_strategy"),
+    (re.compile(r"\b(campaign)\b", re.I), "generate_campaign"),
+    (re.compile(r"\b(cold\s+)?(email|outreach)\b", re.I), "draft_email"),
+    (re.compile(r"\b(pitch)\b", re.I), "generate_pitch"),
+    (re.compile(r"\b(social|linkedin\s+post|tweet|post)\b", re.I), "generate_social"),
+    (re.compile(r"\b(market|demand|competit\w+|industry\s+outlook)\b", re.I), "get_market_intelligence"),
+    (re.compile(r"\b(leads?|hot|warm|cold|prospects?)\b", re.I), "list_leads"),
+]
+
+_OFFLINE_NOTE = (
+    "The AI model is unavailable right now (no API key, or today's quota is spent), "
+    "so I answered from your data directly."
+)
+
+
+def _offline_args(tool: str, message: str) -> Dict[str, Any]:
+    """Best-effort arguments for a tool chosen by regex rather than by the model."""
+    args: Dict[str, Any] = {}
+    if tool == "list_leads":
+        for cat in ("hot", "warm", "cold"):
+            if re.search(rf"\b{cat}\b", message, re.I):
+                args["category"] = cat.title()
+                break
+    elif tool in ("get_deal_strategy", "get_followup_plan"):
+        # Match the message against known company names — the agent normally does this.
+        # Longest name first, so "Meta Platforms" wins over "Meta".
+        with db_conn() as conn:
+            rows = conn.cursor().execute("SELECT company FROM leads").fetchall()
+        names = sorted(
+            {(r["company"] or "").strip() for r in rows if (r["company"] or "").strip()},
+            key=len, reverse=True,
+        )
+        for company in names:
+            if company.lower() in message.lower():
+                args["company"] = company
+                break
+    elif tool == "get_market_intelligence":
+        m = re.search(r"\b(?:for|in|about)\s+([A-Za-z][\w\s&-]{2,30})", message)
+        if m:
+            args["industry"] = m.group(1).strip()
+    return args
+
+
+def _offline_text(tool: str, out: Dict[str, Any]) -> str:
+    """A human sentence for the chat bubble. `for_model` is phrased for the LLM."""
+    result = (out.get("event") or {}).get("result") or {}
+    if tool == "analyze_pipeline":
+        return out.get("for_model", "")          # already a plain sentence
+    if tool == "list_leads":
+        leads = result.get("leads") or []
+        return f"Here are your top {len(leads)} lead{'' if len(leads) == 1 else 's'}."
+    if tool == "get_next_actions":
+        actions = result.get("actions") or []
+        return f"{len(actions)} lead{'' if len(actions) == 1 else 's'} need attention — here they are, highest score first."
+    if tool == "get_deal_strategy":
+        return f"Here's a closing plan for {result.get('company', 'that lead')}."
+    if tool == "get_followup_plan":
+        return f"Here's a follow-up sequence for {result.get('company', 'that lead')}."
+    if tool == "generate_campaign":
+        return "Here's a campaign you can run."
+    if tool == "draft_email":
+        return "Here's an outreach email you can send."
+    if tool == "generate_pitch":
+        return "Here's a pitch you can use."
+    if tool == "generate_social":
+        return "Here's a social post."
+    if tool == "get_market_intelligence":
+        return "Here's the market read."
+    return out.get("for_model", "")
+
+
+def offline_agent(message: str, current_page: str, db_context: Dict[str, Any]) -> Iterator[dict]:
+    """Answer without the LLM, emitting the same event shapes as ``stream_agent``."""
+    page = _normalize_page(message.replace(" ", "_")) if _wants_navigation(message) else ""
+    if page in NAVIGATION_URLS:
+        out = execute_chat_tool("navigate_to_page", {"page": page}, current_page, db_context)
+        if out.get("event"):
+            yield out["event"]
+            return
+
+    for pattern, tool in _OFFLINE_INTENTS:
+        if not pattern.search(message):
+            continue
+        if tool == "__ask_score":
+            yield {"type": "token", "text": (
+                "To score a lead I need three things: the company name, the budget in "
+                "dollars, and their interest level from 1 to 10.\n\n"
+                "Send them like: `Score Acme, budget 50000, interest 8`.\n\n"
+                f"_{_OFFLINE_NOTE}_"
+            )}
+            return
+        args = _offline_args(tool, message)
+        if tool in ("get_deal_strategy", "get_followup_plan") and "company" not in args:
+            continue     # no known company named — this isn't really that intent
+        yield {"type": "tool", "phase": "start", "name": tool,
+               "label": TOOL_LABELS.get(tool, "Working")}
+        out = execute_chat_tool(tool, args, current_page, db_context)
+        if out.get("event"):
+            yield out["event"]
+        yield {"type": "token", "text": f"{_offline_text(tool, out)}\n\n_{_OFFLINE_NOTE}_"}
+        return
+
+    yield {"type": "token", "text": (
+        "⚠️ The AI model is unavailable right now — no API key is set, or today's quota is spent.\n\n"
+        "I can still answer from your data. Try:\n"
+        "- How is my pipeline?\n"
+        "- Which leads are hot?\n"
+        "- What should I do next?\n"
+        "- Draft a campaign / email / pitch"
+    )}
+
+
 def _sse(obj: Dict[str, Any]) -> str:
     return f"data: {json.dumps(obj)}\n\n"
 
@@ -1455,10 +1608,35 @@ def chat_assistant(req: ChatRequest):
         result = run_agent(messages, _chat_executor(user_message, current_page, db_context))
     except Exception as exc:
         logger.error("[CHAT] %s: %s", type(exc).__name__, exc)
-        result = {"response": "I'm here to help with leads, campaigns, and sales strategy. What would you like to do?"}
+        result = {"unavailable": "error"}
+
+    # The model never answered — fall back to the deterministic path.
+    if result.get("unavailable"):
+        result = _drain_offline(user_message, current_page, db_context)
 
     result.setdefault("suggestions", suggestions)
     return result
+
+
+def _drain_offline(message: str, current_page: str, db_context: Dict[str, Any]) -> Dict[str, Any]:
+    """Collect ``offline_agent`` events into the same dict shape ``run_agent`` returns."""
+    text_parts: List[str] = []
+    tools: List[Dict[str, Any]] = []
+    out: Dict[str, Any] = {}
+    for ev in offline_agent(message, current_page, db_context):
+        if ev.get("type") == "token":
+            text_parts.append(ev.get("text", ""))
+        elif ev.get("type") == "tool_result":
+            tools.append({"tool": ev.get("tool"), "result": ev.get("result")})
+        elif ev.get("type") == "action":
+            out["action"] = "navigate"
+            out["page"] = ev.get("page")
+            out["url"] = ev.get("url")
+            text_parts.append(ev.get("response", ""))
+    out["response"] = "".join(text_parts).strip() or "Done."
+    if tools:
+        out["tools"] = tools
+    return out
 
 
 @app.post("/chat/stream")
@@ -1483,6 +1661,13 @@ def chat_stream(req: ChatRequest):
             pipeline_summary = build_pipeline_summary(db_context)
             messages = build_messages(user_message, pipeline_summary, current_page, history)
             for ev in stream_agent(messages, _chat_executor(user_message, current_page, db_context)):
+                # The model never answered (no key, or out of quota). stream_agent only
+                # sends this before anything has streamed or run, so replaying the turn
+                # deterministically cannot double-execute a tool.
+                if ev.get("type") == "unavailable":
+                    for off in offline_agent(user_message, current_page, db_context):
+                        yield _sse(off)
+                    break
                 yield _sse(ev)
         except Exception as exc:
             logger.error("[CHAT_STREAM] %s: %s", type(exc).__name__, exc)
