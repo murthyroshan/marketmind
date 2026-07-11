@@ -5,7 +5,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Tools | SalesSpark AI</title>
-    <link rel="icon" type="image/png" href="./assets/favicon.png">
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg">
+    <link rel="alternate icon" type="image/png" href="./assets/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
 </head>
 
@@ -13,7 +17,7 @@
 
     <nav class="navbar">
         <a href="index.html" class="navbar-brand">
-            <img src="assets/favicon.png" alt="SalesSpark AI Logo">
+            <img src="assets/favicon.svg" alt="SalesSpark AI">
             <span class="brand-text">SalesSpark AI</span>
         </a>
         <div class="nav-links">
@@ -26,14 +30,23 @@
         </div>
     </nav>
 
+    <div class="status-strip" id="statusStrip">
+        <span class="status-item"><span class="status-live"></span> LIVE</span>
+        <span class="status-item">PIPELINE <b id="st-total">--</b></span>
+        <span class="status-item hot">HOT <b id="st-hot">--</b></span>
+        <span class="status-item warm">WARM <b id="st-warm">--</b></span>
+        <span class="status-item">AVG <b id="st-avg">--</b></span>
+        <span class="status-item up">HEALTH <b id="st-health">--</b></span>
+    </div>
+
     <section>
-        <h1 class="page-title">🚀 AI Marketing & Sales Tools</h1>
-        <p class="page-subtitle">Generate campaigns, pitches, content, and outreach with AI</p>
+        <h1 class="page-title">Tools</h1>
+        <p class="page-subtitle">Campaigns · pitches · scoring · outreach · content</p>
         <div class="grid">
 
             <!-- 1. Campaign Generator -->
-            <div class="card" id="campaigns">
-                <h3>🚀 Campaign Generator</h3>
+            <div class="card reveal" style="--i:0" id="campaigns">
+                <h3>Campaign Generator</h3>
                 <div class="input-group">
                     <input id="cG_product" placeholder="Product Name">
                 </div>
@@ -59,8 +72,8 @@
             </div>
 
             <!-- 2. Sales Pitch Generator -->
-            <div class="card" id="sales">
-                <h3>🎯 Sales Pitch Generator</h3>
+            <div class="card reveal" style="--i:1" id="sales">
+                <h3>Sales Pitch Generator</h3>
                 <div class="input-group"><input id="pitchProduct" placeholder="Solution/Product"></div>
                 <div class="input-group"><input id="pitchTarget" placeholder="Target Audience (e.g. CFOs)"></div>
                 <button class="tool-btn" onclick="generatePitch()">Craft Pitch</button>
@@ -68,8 +81,8 @@
             </div>
 
             <!-- 3. Intelligent Lead Scoring -->
-            <div class="card">
-                <h3>⚖️ Intelligent Lead Scoring</h3>
+            <div class="card reveal" style="--i:2">
+                <h3>Intelligent Lead Scoring</h3>
                 <div class="input-group"><input id="leadCompany" placeholder="Company Name"></div>
                 <div class="input-group"><input id="leadBudget" type="number" placeholder="Budget ($)"></div>
                 <div class="input-group"><input id="leadInterest" type="number" placeholder="Interest (1-10)"></div>
@@ -77,28 +90,18 @@
                 <div id="leadOutput" class="output"></div>
             </div>
 
-            <!-- 4. Market Analysis (Preserving existing working one, or updating if needed? Prompt didn't specify new JS for this, only the 4 broken ones. But 'Market Analysis' was not listed as broken in 'CURRENT STATUS' of previous prompt, but listed as broken in 'PROBLEMS TO FIX' earlier? Actually the prompt says 'Campaign Generator works -> others do not'. Market Analysis is 'others'? 
-            Wait, the prompt only gave JS for: Pitch, Lead Scoring, Channel Content, AI Outreach. 
-            It did NOT give JS for Market Analysis. 
-            I should probably leave Market Analysis alone or check if it needs fixes. 
-            The 'CURRENT STATUS' says: Campaign Generator -> WORKING. 
-            Pitch, Leads, Social, Outreach -> NOT WORKING.
-            Market Analysis is not mentioned as broken or working explicitly in the list of 5 items. 
-            However, previous turns established /market endpoint works. 
-            I will focus strictly on the 4 provided in the prompt "2 REPLCE ALL API CALLS WITH THESE EXACT ONES". 
-            I'll touch the IDs for the 4 tools. -->
 
             <!-- 4. Market Analysis -->
-            <div class="card" id="analysis">
-                <h3>📊 Market Analysis</h3>
+            <div class="card reveal" style="--i:3" id="analysis">
+                <h3>Market Analysis</h3>
                 <div class="input-group"><input id="mA_industry" placeholder="Industry Sector"></div>
                 <button class="tool-btn" onclick="analyzeMarket()">Scan Market</button>
                 <div id="mA_output" class="output"></div>
             </div>
 
             <!-- 5. Channel Content -->
-            <div class="card">
-                <h3>📱 Channel Content Gen</h3>
+            <div class="card reveal" style="--i:4">
+                <h3>Channel Content Gen</h3>
                 <div class="input-group">
                     <input id="contentProduct" placeholder="Product / Feature">
                 </div>
@@ -114,8 +117,8 @@
             </div>
 
             <!-- 6. AI Outreach -->
-            <div class="card">
-                <h3>📧 AI Outreach Generator</h3>
+            <div class="card reveal" style="--i:5">
+                <h3>AI Outreach Generator</h3>
                 <div class="input-group"><input id="emailRecipient" placeholder="Recipient Name"></div>
                 <div class="input-group"><input id="emailProduct" placeholder="Product/Solution"></div>
                 <div class="input-group"><textarea id="emailContext"
@@ -128,7 +131,7 @@
     </section>
 
     <footer>
-        <p>© 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
+        <p>SalesSpark AI &middot; Sales Intelligence Terminal &middot; 2026</p>
     </footer>
 
     <script src="js/app.js"></script>

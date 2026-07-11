@@ -5,7 +5,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SalesSpark AI | Enterprise Intelligence</title>
-    <link rel="icon" type="image/png" href="./assets/favicon.png">
+    <link rel="icon" type="image/svg+xml" href="./assets/favicon.svg">
+    <link rel="alternate icon" type="image/png" href="./assets/favicon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/style.css">
 </head>
 
@@ -13,7 +17,7 @@
 
     <nav class="navbar">
         <a href="index.html" class="navbar-brand">
-            <img src="assets/favicon.png" alt="SalesSpark AI Logo">
+            <img src="assets/favicon.svg" alt="SalesSpark AI">
             <span class="brand-text">SalesSpark AI</span>
         </a>
         <div class="nav-links">
@@ -26,41 +30,122 @@
         </div>
     </nav>
 
+    <div class="status-strip" id="statusStrip">
+        <span class="status-item"><span class="status-live"></span> LIVE</span>
+        <span class="status-item">PIPELINE <b id="st-total">--</b></span>
+        <span class="status-item hot">HOT <b id="st-hot">--</b></span>
+        <span class="status-item warm">WARM <b id="st-warm">--</b></span>
+        <span class="status-item">AVG <b id="st-avg">--</b></span>
+        <span class="status-item up">HEALTH <b id="st-health">--</b></span>
+    </div>
+
     <section class="hero">
-        <h2>Enterprise Growth Intelligence</h2>
-        <p>Leverage autonomous AI agents to generate high-conversion campaigns, score leads, and analyze market trends
-            in real-time.</p>
-        <div style="display:flex; gap:20px; justify-content:center;">
-            <a href="tools.html" class="btn-primary">Open Tools</a>
-            <a href="sales_copilot.html" class="btn-primary"
-                style="background:transparent; border:1px solid rgba(255,255,255,0.2); box-shadow:none;">View
-                Analytics</a>
+        <div class="hero-copy">
+            <h2>Read your pipeline like a market</h2>
+            <p>Every lead scored, every deal ranked, every campaign forecast before you spend a dollar on it.
+                One terminal for the whole desk.</p>
+            <div class="hero-cta">
+                <a href="sales_copilot.html" class="btn-primary">Open Terminal</a>
+                <a href="tools.html" class="btn-outline">Run a Tool</a>
+            </div>
+        </div>
+
+        <div class="hero-chart">
+            <div class="chart-frame">
+                <div class="chart-head">
+                    <span class="chart-tag">SCORE DISTRIBUTION · LIVE</span>
+                    <span class="chart-tag" id="chartHi">—</span>
+                </div>
+                <canvas id="heroCanvas" width="620" height="300" aria-hidden="true"></canvas>
+                <div class="chart-axis" id="chartAxis"></div>
+            </div>
+        </div>
+    </section>
+
+    <div class="ticker" aria-hidden="true">
+        <div class="ticker-track" id="tickerTrack"></div>
+    </div>
+
+    <section id="live">
+        <h2 class="section-title">Live Pipeline</h2>
+        <div class="board">
+            <div class="board-main">
+                <div class="board-head">
+                    <span class="board-label">Pipeline Value</span>
+                    <span class="board-delta" id="pv-delta">—</span>
+                </div>
+                <div class="board-value" id="pv-value">$0</div>
+                <div class="board-sub" id="pv-sub">Reading database…</div>
+
+                <div class="dist" id="dist">
+                    <div class="dist-row" data-cat="hot">
+                        <span class="dist-name">Hot</span>
+                        <span class="dist-count" id="d-hot">0</span>
+                        <span class="dist-track"><i id="b-hot"></i></span>
+                        <span class="dist-pct" id="p-hot">0%</span>
+                    </div>
+                    <div class="dist-row" data-cat="warm">
+                        <span class="dist-name">Warm</span>
+                        <span class="dist-count" id="d-warm">0</span>
+                        <span class="dist-track"><i id="b-warm"></i></span>
+                        <span class="dist-pct" id="p-warm">0%</span>
+                    </div>
+                    <div class="dist-row" data-cat="cold">
+                        <span class="dist-name">Cold</span>
+                        <span class="dist-count" id="d-cold">0</span>
+                        <span class="dist-track"><i id="b-cold"></i></span>
+                        <span class="dist-pct" id="p-cold">0%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="board-side">
+                <div class="board-head">
+                    <span class="board-label">Top Accounts</span>
+                    <a href="leads.html" class="board-link">All →</a>
+                </div>
+                <div id="top-leads" class="top-leads">
+                    <div class="skeleton"></div>
+                    <div class="skeleton"></div>
+                    <div class="skeleton"></div>
+                </div>
+            </div>
         </div>
     </section>
 
     <section id="features">
-        <h2 class="section-title">Core Capabilities</h2>
+        <h2 class="section-title">Capabilities</h2>
         <div class="grid">
-            <div class="card">
-                <h3>🚀 Campaign Strategy</h3>
-                <p style="color:var(--text-muted);">Instantly generate multi-channel marketing campaigns tailored to
-                    your specific business goals.</p>
+            <div class="card reveal" style="--i:0">
+                <h3>Campaign Strategy</h3>
+                <p>Multi-channel campaigns built against your live pipeline, not a template library.</p>
             </div>
-            <div class="card">
-                <h3>🎯 Precision Sales Pitches</h3>
-                <p style="color:var(--text-muted);">Craft persuasive scripts that handle objections and close deals
-                    faster.</p>
+            <div class="card reveal" style="--i:1">
+                <h3>Precision Pitches</h3>
+                <p>Scripts that open, frame the problem, and pre-handle the objection you were going to get.</p>
             </div>
-            <div class="card">
-                <h3>⚖️ Intelligent Scoring</h3>
-                <p style="color:var(--text-muted);">Automatically rank leads based on budget, intent signals, and
-                    company firmographics.</p>
+            <div class="card reveal" style="--i:2">
+                <h3>Intelligent Scoring</h3>
+                <p>Budget, intent and firmographics resolved into one number between 0 and 100.</p>
+            </div>
+            <div class="card reveal" style="--i:3">
+                <h3>Deal Closing</h3>
+                <p>Per-account closing plans with a discount band, the likely objection, and the next step.</p>
+            </div>
+            <div class="card reveal" style="--i:4">
+                <h3>Market Intelligence</h3>
+                <p>Demand, competition and opportunity read per industry, region and time horizon.</p>
+            </div>
+            <div class="card reveal" style="--i:5">
+                <h3>Copilot</h3>
+                <p>Ask in plain English. It queries your data, drafts the asset, and moves you to the page.
+                    Press <code>Ctrl</code>+<code>K</code>.</p>
             </div>
         </div>
     </section>
 
     <footer>
-        <p>© 2026 SalesSpark AI | Enterprise Intelligence Engine</p>
+        <p>SalesSpark AI &middot; Sales Intelligence Terminal &middot; 2026</p>
     </footer>
 
     <script src="js/app.js"></script>
